@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   api,
   type CharacterSummary,
@@ -599,9 +599,24 @@ export default function ChapterBriefPanel({
     setCollapsed(true);
   }, [projectId, chapterNumber]);
 
+  // Notify parent only when `collapsed` actually changes. The parent's inline
+  // arrow callback would otherwise cause this effect to fire on every parent
+  // re-render, stomping any pending state updates in the parent (e.g. an
+  // explicit pipeline-stage click). We also skip the very first invocation on
+  // mount — the parent already knows the initial state and doesn't need a
+  // synthetic collapse callback that would mutate persisted studio place.
+  const onCollapsedChangeRef = useRef(onCollapsedChange);
   useEffect(() => {
-    onCollapsedChange?.(collapsed);
-  }, [collapsed, onCollapsedChange]);
+    onCollapsedChangeRef.current = onCollapsedChange;
+  }, [onCollapsedChange]);
+  const firstCollapsedReportRef = useRef(true);
+  useEffect(() => {
+    if (firstCollapsedReportRef.current) {
+      firstCollapsedReportRef.current = false;
+      return;
+    }
+    onCollapsedChangeRef.current?.(collapsed);
+  }, [collapsed]);
 
   useEffect(() => {
     if (graphNodesProp) {

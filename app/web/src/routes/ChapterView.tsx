@@ -63,7 +63,6 @@ import {
   type ChapterFunction,
 } from "../lib/chapterWorkflow";
 import {
-  bestProseStage,
   readStudioPlace,
   stageForStudioPlace,
   studioPlaceFromSelection,
@@ -178,7 +177,15 @@ export default function ChapterView() {
   const [commentPrefill, setCommentPrefill] = useState<AddCommentPayload | null>(null);
   const lastPipelinePhaseRef = useRef<string | null>(null);
   const studioPlaceRef = useRef<ChapterStudioPlace>(readStudioPlace(id) ?? "prose");
-  const [stageOverride, setStageOverride] = useState<{ chapter: number; stage: StageKey } | null>(null);
+  // `selected` is the source of truth for the active pipeline stage. It is
+  // recomputed exactly once per chapter (see the effect below) so that intra-
+  // chapter stage clicks are never overridden by anything else.
+  const [selected, setSelected] = useState<StageKey>(() => {
+    const url = searchParams.get("stage") as StageKey | null;
+    if (url && STAGE_KEYS.includes(url)) return url;
+    return "outline";
+  });
+  const selectedForChapterRef = useRef<number | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [titleSaving, setTitleSaving] = useState(false);
   const [titleLastSaved, setTitleLastSaved] = useState<string | null>(null);
@@ -280,14 +287,9 @@ export default function ChapterView() {
   titleDraftRef.current = titleDraft;
   busyRef.current = busy;
 
-  const stageParam = searchParams.get("stage") as StageKey | null;
-  const pickedStage = stageOverride?.chapter === num ? stageOverride.stage : null;
-  const selected: StageKey =
-    pickedStage
-    ?? (stageParam && STAGE_KEYS.includes(stageParam) ? stageParam : null)
-    ?? (stages ? stageForStudioPlace(studioPlaceRef.current, stages) : "outline");
-
   function selectStage(s: StageKey) {
+    setSelected(s);
+    selectedForChapterRef.current = num;
     if (s === "outline") {
       studioPlaceRef.current = "outline";
       writeStudioPlace(id, "outline");
@@ -295,7 +297,6 @@ export default function ChapterView() {
       studioPlaceRef.current = "prose";
       writeStudioPlace(id, "prose");
     }
-    setStageOverride({ chapter: num, stage: s });
     setBriefExpanded(false);
     setSearchParams(
       (prev) => {
@@ -307,25 +308,20 @@ export default function ChapterView() {
   }
 
   function setBriefPanelExpanded(expanded: boolean) {
+    // Skip if the panel is already in the requested state. Prevents spurious
+    // side effects (place ref / sessionStorage / re-render) when child panels
+    // fire lifecycle-style callbacks that don't represent user actions.
+    if (expanded === briefExpanded) return;
     setBriefExpanded(expanded);
     if (expanded) {
       studioPlaceRef.current = "brief";
       writeStudioPlace(id, "brief");
       return;
     }
-    studioPlaceRef.current = "prose";
-    writeStudioPlace(id, "prose");
-    if (stages) {
-      const stage = bestProseStage(stages);
-      setStageOverride({ chapter: num, stage });
-      setSearchParams(
-        (prev) => {
-          prev.set("stage", stage);
-          return prev;
-        },
-        { replace: true },
-      );
-    }
+    // Collapse only updates the persisted place — never overrides the user's
+    // explicit stage selection.
+    studioPlaceRef.current = selected === "outline" ? "outline" : "prose";
+    writeStudioPlace(id, studioPlaceRef.current);
   }
 
   function combinedOutlineInstructions(): string {
@@ -375,8 +371,27 @@ export default function ChapterView() {
     revisedDirtyRef.current = false;
     outlineDirtyRef.current = false;
     if (!titleFocused.current) setTitleDraft("");
-    setStageOverride(null);
+    // Force landing-stage recomputation on the next stages-load for this chapter.
+    selectedForChapterRef.current = null;
   }, [id, num]);
+
+  // Compute landing stage exactly once per chapter, after stages load.
+  // - Deep link `?stage=xxx` wins on first render.
+  // - Otherwise use the persisted studio place mapped against the new stages.
+  // Intra-chapter clicks bypass this entirely because selectedForChapterRef
+  // is already set to `num` after the first computation.
+  useEffect(() => {
+    if (!stages) return;
+    if (selectedForChapterRef.current === num) return;
+    selectedForChapterRef.current = num;
+    const urlStage = searchParams.get("stage") as StageKey | null;
+    if (urlStage && STAGE_KEYS.includes(urlStage)) {
+      setSelected(urlStage);
+      return;
+    }
+    setSelected(stageForStudioPlace(studioPlaceRef.current, stages));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stages, num, id]);
 
   const reload = useCallback((opts?: { force?: boolean }) => {
     if (!chapterNumValid) {

@@ -22,7 +22,10 @@ export default function ToolTipDock() {
       role="tooltip"
       onMouseEnter={holdActive}
       onMouseLeave={scheduleDismissActive}
-      className="pointer-events-auto fixed bottom-4 left-4 z-[9999] max-w-[320px] rounded-lg border border-paper-line bg-paper-card px-3 py-2.5 text-[12px] leading-relaxed shadow-[var(--shadow-lift)]"
+      // Bottom-right keeps the dock out of the left sidebar's click zone.
+      // pointer-events-auto is scoped to the dock itself (its own bounding box),
+      // and the fixed element only exists in the DOM while activeId is set.
+      className="pointer-events-auto fixed bottom-4 right-4 z-[9999] max-w-[320px] rounded-lg border border-paper-line bg-paper-card px-3 py-2.5 text-[12px] leading-relaxed shadow-[var(--shadow-lift)]"
     >
       <p className="mb-1.5 font-semibold text-ink-text">{entry.label}</p>
       <dl className="space-y-1 text-ink-muted">

@@ -36,6 +36,53 @@ test("renders child unchanged", () => {
   expect(button).not.toHaveAttribute("aria-describedby");
 });
 
+test("does not wrap valid-element children in an extra span by default", () => {
+  renderWithTooltips(
+    <div data-testid="parent">
+      <ToolTip id="chapter.revise">
+        <button type="button" data-testid="anchor">
+          Revise
+        </button>
+      </ToolTip>
+    </div>,
+  );
+  const parent = screen.getByTestId("parent");
+  const button = screen.getByTestId("anchor");
+  // Anchor button should be a direct child of its layout parent — the ToolTip
+  // wrapper must not insert an intermediate <span> that breaks flex/grid
+  // hit-testing for NavLinks, breadcrumb links, panel toggles, etc.
+  expect(button.parentElement).toBe(parent);
+});
+
+test("still wraps when caller supplies a layout className", () => {
+  renderWithTooltips(
+    <div data-testid="parent">
+      <ToolTip id="chapter.revise" className="inline-flex h-7 items-center">
+        <button type="button" data-testid="anchor">
+          Revise
+        </button>
+      </ToolTip>
+    </div>,
+  );
+  const button = screen.getByTestId("anchor");
+  const wrapper = button.parentElement!;
+  expect(wrapper.tagName).toBe("SPAN");
+  expect(wrapper).toHaveClass("inline-flex", "h-7", "items-center");
+});
+
+test("clicks on the anchor still reach the child handler", async () => {
+  const onClick = vi.fn();
+  renderWithTooltips(
+    <ToolTip id="chapter.revise">
+      <button type="button" data-testid="anchor" onClick={onClick}>
+        Revise
+      </button>
+    </ToolTip>,
+  );
+  fireEvent.click(screen.getByTestId("anchor"));
+  expect(onClick).toHaveBeenCalledTimes(1);
+});
+
 test("shows tooltip content in dock after hover delay", async () => {
   const entry = getToolTip("chapter.revise");
   renderWithTooltips(

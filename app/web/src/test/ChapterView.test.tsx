@@ -64,3 +64,77 @@ test("shows the pipeline flow and renders the selected stage", async () => {
   // outline is the only present stage, so it renders by default
   await waitFor(() => expect(document.body).toHaveTextContent("Beats"));
 });
+
+test("clicking an intra-chapter stage stays on that stage", async () => {
+  const user = userEvent.setup();
+
+  vi.spyOn(client.api, "chapter").mockResolvedValue({
+    ...META,
+    status: "complete",
+    word_count: 1200,
+  });
+  vi.spyOn(client.api, "chapters").mockResolvedValue([]);
+  vi.spyOn(client.api, "characters").mockResolvedValue([]);
+  vi.spyOn(client.api, "storyBible").mockResolvedValue({ data: {} });
+  vi.spyOn(client.api, "stages").mockResolvedValue({
+    number: 1,
+    status: "complete",
+    outline: "# Beats one",
+    draft: "Draft one",
+    revised: "Revised one",
+    final: "Final one",
+    continuity: null,
+  });
+  vi.spyOn(client.api, "comments").mockResolvedValue([]);
+
+  renderAt();
+
+  // Default lands on the highest prose stage (Final).
+  await screen.findByRole("button", { name: /Step 4, Final stage/ });
+  await waitFor(() => expect(document.body).toHaveTextContent("Final one"));
+
+  // Click Outline — must switch and stay there, never bounce back to Final.
+  const outlineButton = screen.getByRole("button", { name: /Step 1, Outline stage/ });
+  await user.click(outlineButton);
+  await waitFor(() => expect(document.body).toHaveTextContent("Beats one"));
+
+  // Give any spurious effects a chance to fire and stomp the selection.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(document.body).toHaveTextContent("Beats one");
+  expect(document.body).not.toHaveTextContent("Final one");
+
+  // Draft click also holds.
+  const draftButton = screen.getByRole("button", { name: /Step 2, Draft stage/ });
+  await user.click(draftButton);
+  await waitFor(() => expect(document.body).toHaveTextContent("Draft one"));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(document.body).toHaveTextContent("Draft one");
+});
+
+test("deep-link ?stage=outline is honored on first load", async () => {
+  vi.spyOn(client.api, "chapter").mockResolvedValue({
+    ...META,
+    status: "complete",
+    word_count: 1200,
+  });
+  vi.spyOn(client.api, "chapters").mockResolvedValue([]);
+  vi.spyOn(client.api, "characters").mockResolvedValue([]);
+  vi.spyOn(client.api, "storyBible").mockResolvedValue({ data: {} });
+  vi.spyOn(client.api, "stages").mockResolvedValue({
+    number: 1,
+    status: "complete",
+    outline: "# Beats two",
+    draft: "Draft two",
+    revised: "Revised two",
+    final: "Final two",
+    continuity: null,
+  });
+  vi.spyOn(client.api, "comments").mockResolvedValue([]);
+
+  renderAt("/projects/p/chapters/1?stage=outline");
+
+  // Even though final prose exists, the deep-link wins.
+  await waitFor(() => expect(document.body).toHaveTextContent("Beats two"));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(document.body).not.toHaveTextContent("Final two");
+});

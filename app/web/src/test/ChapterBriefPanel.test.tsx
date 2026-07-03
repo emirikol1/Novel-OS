@@ -42,7 +42,7 @@ test("explains prompt effect and loads empty brief", async () => {
   expect(screen.getByLabelText(/POV character/i)).toBeInTheDocument();
 });
 
-test("notifies parent when collapsed state changes", async () => {
+test("notifies parent only when the user actually toggles the panel", async () => {
   const onCollapsedChange = vi.fn();
   const user = userEvent.setup();
   render(
@@ -56,8 +56,11 @@ test("notifies parent when collapsed state changes", async () => {
     </TestProviders>,
   );
   await screen.findByRole("button", { name: /Chapter Brief/i });
-  expect(onCollapsedChange).toHaveBeenCalledWith(true);
-  onCollapsedChange.mockClear();
+  // The panel starts collapsed by default; the parent already knows this and
+  // should NOT be notified on mount, otherwise a spurious "collapse" callback
+  // will stomp state the parent set for other reasons (e.g. pipeline stage
+  // selection). See ChapterView bug 0.51.
+  expect(onCollapsedChange).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: /Chapter Brief/i }));
   expect(onCollapsedChange).toHaveBeenCalledWith(false);
   onCollapsedChange.mockClear();

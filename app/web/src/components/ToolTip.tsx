@@ -44,7 +44,7 @@ export default function ToolTip({
     ref?: React.Ref<HTMLElement>;
   };
 
-  const child = isValidElement(children)
+  const cloned = isValidElement(children)
     ? (() => {
         const childElement = children as ReactElement<AnchorProps>;
         return cloneElement(childElement, {
@@ -68,19 +68,33 @@ export default function ToolTip({
           "aria-describedby": visible ? TOOLTIP_DOCK_ID : undefined,
         });
       })()
-    : (
-      <span
-        onMouseEnter={show}
-        onMouseLeave={hide}
-        onFocus={(e) => {
-          if ((e.target as HTMLElement).matches(":focus-visible")) show();
-        }}
-        onBlur={hide}
-        aria-describedby={visible ? TOOLTIP_DOCK_ID : undefined}
-      >
-        {children}
-      </span>
-    );
+    : null;
 
-  return <span className={className ?? "inline-flex items-center gap-1"}>{child}</span>;
+  // When the child is a valid element AND the caller has not supplied a layout
+  // className, render the cloned anchor directly. Wrapping in an extra <span
+  // class="inline-flex …"> was breaking hit-testing / layout for anchors that
+  // already had display: flex or expected to be a direct grid/flex item of
+  // their own parent (sidebar NavLinks, breadcrumb Links, PanelToggle button,
+  // etc.). The events are attached to the cloned child, so no wrapper is
+  // needed unless the caller explicitly asked for a wrapper via className.
+  if (cloned && className === undefined) return cloned;
+
+  if (cloned) {
+    return <span className={className}>{cloned}</span>;
+  }
+
+  return (
+    <span
+      className={className ?? "inline-flex items-center gap-1"}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={(e) => {
+        if ((e.target as HTMLElement).matches(":focus-visible")) show();
+      }}
+      onBlur={hide}
+      aria-describedby={visible ? TOOLTIP_DOCK_ID : undefined}
+    >
+      {children}
+    </span>
+  );
 }
