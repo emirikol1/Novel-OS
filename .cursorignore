@@ -1,0 +1,11 @@
+# Blocked from Cursor AI codebase search for story manuscripts.
+# Files remain visible in the file explorer.
+
+/projects/
+venv/
+*.pid
+
+# Secrets
+.env
+.env.*
+config/app_config.json

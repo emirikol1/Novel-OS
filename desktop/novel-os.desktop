@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Novel-OS
+Comment=Multi-agent novel writing studio (LM Studio)
+Exec=@NOVEL_OS_HOME@/bin/novel-os-launch.sh
+Path=@NOVEL_OS_HOME@/app
+Icon=@NOVEL_OS_HOME@/icon/novel-os.svg
+Terminal=false
+StartupNotify=true
+Categories=Office;
+Keywords=novel;writing;fiction;ai;lmstudio;story;

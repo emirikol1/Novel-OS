@@ -1,0 +1,7 @@
+# Excluded from Cursor codebase index & semantic search only.
+# Files stay visible in the explorer and can still be @-mentioned.
+
+/projects/
+logs/
+run/
+venv/

@@ -1,0 +1,104 @@
+import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "motion/react";
+import ToolTip from "./ToolTip";
+
+const SIZE_CLASS = {
+  default: "max-w-md",
+  wide: "max-w-2xl",
+} as const;
+
+export default function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  size = "default",
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  size?: keyof typeof SIZE_CLASS;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <div
+            className="absolute inset-0 bg-ink/50 backdrop-blur-sm"
+            onClick={onClose}
+            aria-hidden="true"
+          />
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label={title}
+            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            className={`relative w-full ${SIZE_CLASS[size]} rounded-2xl border border-paper-line bg-paper-card p-7 shadow-[var(--shadow-lift)]`}
+          >
+            <div className="mb-5 flex items-start justify-between gap-3">
+              <h2 className="font-display text-[22px] font-semibold tracking-tight text-ink-text">
+                {title}
+              </h2>
+              <ToolTip id="global.modalClose">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="Close dialog"
+                  className="-mr-1 -mt-1 shrink-0 rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-ink/5 hover:text-ink-text"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </ToolTip>
+            </div>
+            {children}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body,
+  );
+}
+
+export function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="mb-4 block">
+      <span className="mb-1.5 block text-[12px] font-semibold uppercase tracking-[0.1em] text-ink-muted">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+export const fieldClass =
+  "w-full rounded-lg border border-paper-line bg-paper px-3.5 py-2.5 text-[14px] text-ink-text placeholder:text-paper-muted";

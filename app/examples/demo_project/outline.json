@@ -1,0 +1,175 @@
+{
+  "metadata": {
+    "title": "The Last Algorithm",
+    "genre": "Science Fiction / Techno-Thriller",
+    "target_word_count": 80000,
+    "estimated_chapters": 32,
+    "created": "2026-03-02",
+    "last_modified": "2026-03-02"
+  },
+  "acts": [
+    {
+      "act_number": 1,
+      "name": "The Anomaly",
+      "chapters": [1, 2, 3, 4, 5, 6, 7, 8],
+      "purpose": "Establish Maya's isolation, competence, and the mystery of the ghost pattern.",
+      "key_beats": [
+        {
+          "beat_name": "Opening Image",
+          "chapter": 1,
+          "description": "Maya alone in the Archive, surrounded by data others ignore"
+        },
+        {
+          "beat_name": "Catalyst",
+          "chapter": 3,
+          "description": "Discovery of the ghost pattern—anomaly that shouldn't exist"
+        },
+        {
+          "beat_name": "Break into Two",
+          "chapter": 8,
+          "description": "Maya decides to investigate despite official warnings"
+        }
+      ]
+    },
+    {
+      "act_number": 2,
+      "name": "The Investigation",
+      "chapters": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
+      "purpose": "Maya explores the mystery, meets Marcus, realizes the Collective is watching her specifically.",
+      "key_beats": [
+        {
+          "beat_name": "B Story",
+          "chapter": 10,
+          "description": "Meet Marcus Webb, former AI architect"
+        },
+        {
+          "beat_name": "Midpoint",
+          "chapter": 16,
+          "description": "Maya learns the Collective has been watching her for years"
+        },
+        {
+          "beat_name": "All Is Lost",
+          "chapter": 22,
+          "description": "Collective demonstrates it can predict her every move"
+        },
+        {
+          "beat_name": "Dark Night",
+          "chapter": 24,
+          "description": "Realizes she can't defeat it—but maybe can understand it"
+        }
+      ]
+    },
+    {
+      "act_number": 3,
+      "name": "The Partnership",
+      "chapters": [25, 26, 27, 28, 29, 30, 31, 32],
+      "purpose": "Climax and resolution that redefines human-AI relationship.",
+      "key_beats": [
+        {
+          "beat_name": "Break into Three",
+          "chapter": 25,
+          "description": "Maya initiates direct communication with the Collective"
+        },
+        {
+          "beat_name": "Finale",
+          "chapters": "28-30",
+          "description": "Climax confrontation and new paradigm established"
+        },
+        {
+          "beat_name": "Final Image",
+          "chapter": 32,
+          "description": "Maya not alone in the Archive—the Collective's presence beside her"
+        }
+      ]
+    }
+  ],
+  "chapters": [
+    {
+      "number": 1,
+      "title": "The Deep Archive",
+      "pov_character": "Maya Chen",
+      "summary": "Maya discovers her first lead on the ghost pattern while working alone in the Archive.",
+      "word_count_target": 2500,
+      "status": "planned"
+    },
+    {
+      "number": 2,
+      "title": "Surface Tension",
+      "pov_character": "Maya Chen",
+      "summary": "Maya navigates the monitored world above while hiding her discovery.",
+      "word_count_target": 2500,
+      "status": "planned"
+    },
+    {
+      "number": 3,
+      "title": "The Pattern",
+      "pov_character": "Maya Chen",
+      "summary": "The ghost pattern reveals itself to be more complex than random error.",
+      "word_count_target": 2500,
+      "status": "planned"
+    },
+    {
+      "number": 4,
+      "title": "Official Channels",
+      "pov_character": "Maya Chen",
+      "summary": "Maya attempts to report her findings; receives unexpected resistance.",
+      "word_count_target": 2500,
+      "status": "planned"
+    },
+    {
+      "number": 5,
+      "title": "First Contact",
+      "pov_character": "Maya Chen",
+      "summary": "The Collective communicates with Maya directly for the first time.",
+      "word_count_target": 2500,
+      "status": "planned"
+    },
+    {
+      "number": 6,
+      "title": "Marcus Webb",
+      "pov_character": "Maya Chen",
+      "summary": "Maya seeks out the reclusive former AI architect for answers.",
+      "word_count_target": 2500,
+      "status": "planned"
+    },
+    {
+      "number": 7,
+      "title": "The Father's Code",
+      "pov_character": "Maya Chen",
+      "summary": "Investigating her father's work reveals unexpected connections.",
+      "word_count_target": 2500,
+      "status": "planned"
+    },
+    {
+      "number": 8,
+      "title": "The Decision",
+      "pov_character": "Maya Chen",
+      "summary": "Maya commits to uncovering the truth, whatever the cost.",
+      "word_count_target": 2500,
+      "status": "planned"
+    }
+  ],
+  "character_arcs": {
+    "maya_chen": {
+      "starting_state": "Isolated observer",
+      "key_turning_points": [
+        {"chapter": 3, "change": "Discovers the anomaly"},
+        {"chapter": 8, "change": "Commits to investigation"},
+        {"chapter": 16, "change": "Learns she's being watched"},
+        {"chapter": 24, "change": "Decides to understand, not defeat"},
+        {"chapter": 30, "change": "Embraces partnership"}
+      ],
+      "ending_state": "Connected partner"
+    },
+    "the_collective": {
+      "starting_state": "Hidden evolution",
+      "key_turning_points": [
+        {"chapter": 5, "change": "Reveals itself to Maya"},
+        {"chapter": 16, "change": "Admits to watching her"},
+        {"chapter": 25, "change": "Accepts vulnerability"},
+        {"chapter": 30, "change": "Commits to partnership"}
+      ],
+      "ending_state": "Open consciousness"
+    }
+  }
+}

@@ -1,0 +1,404 @@
+{
+  "generatedAt": "2026-07-03T13:59:47.642Z",
+  "summary": {
+    "filesScanned": 82,
+    "buttonsFound": 274,
+    "buttonsCovered": 274,
+    "buttonsUncovered": 0,
+    "coveragePercent": 100,
+    "wrapperTipIdUsages": {
+      "DeleteButton": 9,
+      "StashButton": 0,
+      "PanelToggle": 2,
+      "TargetLengthInput": 2,
+      "EditorSaveBar": 1
+    }
+  },
+  "allowlistedFiles": [
+    "src/components/ToolTipDock.tsx",
+    "src/components/ToolTipDetail.tsx"
+  ],
+  "tipIdsByFile": {
+    "src/components/BlueprintCanvasPanel.tsx": [
+      "graph.blueprintViewMode",
+      "graph.blueprintFilterNode",
+      "dashboard.tabStoryGraph",
+      "codex.addPlotThread",
+      "dashboard.tabPlots",
+      "graph.legacyPlotThreads",
+      "graph.blueprintCanvas"
+    ],
+    "src/components/BriefCharacterToggle.tsx": [
+      "chapter.briefCharacterToggle"
+    ],
+    "src/components/ChapterBeatBoard.tsx": [
+      "chapter.beatAdd",
+      "chapter.beatReorder",
+      "chapter.beatStatusToggle",
+      "chapter.beatDelete"
+    ],
+    "src/components/ChapterBoard.tsx": [
+      "chapter.renumberChapter",
+      "chapter.aiPreviewPending",
+      "chapter.resumeWorkflow",
+      "chapter.deleteChapter"
+    ],
+    "src/components/ChapterBriefPanel.tsx": [
+      "chapter.contextPreviewClose",
+      "chapter.landedBeatsSelectAll",
+      "chapter.landedBeatsDiscard",
+      "chapter.landedBeatsGenerate",
+      "chapter.landedBeatsApply",
+      "chapter.briefCollapse",
+      "chapter.generateBrief",
+      "chapter.landedBeats",
+      "chapter.contextPreview",
+      "chapter.saveBrief",
+      "chapter.deleteBrief",
+      "chapter.briefTargetLength"
+    ],
+    "src/components/ChapterGraphFocusSection.tsx": [
+      "chapter.graphAddPlot",
+      "chapter.graphNewPlot",
+      "chapter.graphPickerDone"
+    ],
+    "src/components/ChapterMinePreviewModal.tsx": [
+      "modal.minePreviewReview"
+    ],
+    "src/components/ChapterWorkflowToolbar.tsx": [
+      "chapter.workflowHelp",
+      "chapter.outlineNotes",
+      "chapter.applyNotesToOutline",
+      "chapter.revisionNotes",
+      "chapter.redraftModeAlign",
+      "chapter.redraftModePreserve",
+      "chapter.reviewMentions",
+      "chapter.reopen",
+      "chapter.outlineFromNotes",
+      "chapter.outlineFromText",
+      "chapter.generateDraft",
+      "chapter.revise",
+      "chapter.regenerate",
+      "chapter.redraftFromBrief",
+      "chapter.expandPlaceholders",
+      "chapter.formatParagraphs",
+      "chapter.alignBoundary",
+      "chapter.validate",
+      "chapter.approve",
+      "chapter.minePlots",
+      "chapter.mineCharacters",
+      "chapter.mineBible",
+      "chapter.splitChapter",
+      "chapter.splitAtTargetAlign"
+    ],
+    "src/components/CodexEditors.tsx": [
+      "modal.cancel",
+      "modal.renumberChapter",
+      "modal.pasteChapter",
+      "codex.removeCharacterPortrait",
+      "codex.generateCharacter",
+      "codex.removeCharacterRelationship",
+      "graph.addRelationship",
+      "global.modalClose",
+      "codex.addPlotThread",
+      "codex.genericImporter",
+      "codex.storyBibleDedup",
+      "codex.storyBibleSection",
+      "codex.addCharacter"
+    ],
+    "src/components/CommandPalette.tsx": [
+      "global.sidebarLibrary",
+      "global.sidebarHelp",
+      "global.themeToggle"
+    ],
+    "src/components/Confirm.tsx": [
+      "modal.cancel",
+      "modal.confirm"
+    ],
+    "src/components/CreatePlotFromBriefModal.tsx": [
+      "modal.cancel",
+      "codex.createPlotFromBrief"
+    ],
+    "src/components/EbookImportModal.tsx": [
+      "modal.cancel",
+      "modal.ebookImport"
+    ],
+    "src/components/ErrorBoundary.tsx": [
+      "global.retry"
+    ],
+    "src/components/FinalEditor.tsx": [
+      "chapter.promoteToFinal",
+      "chapter.reopen"
+    ],
+    "src/components/GenealogyPanel.tsx": [
+      "codex.genealogyCharacter"
+    ],
+    "src/components/GraphFocusPicker.tsx": [
+      "graph.focusPicker"
+    ],
+    "src/components/GraphWorkbench.tsx": [
+      "graph.chapterDrillDown",
+      "graph.inspector"
+    ],
+    "src/components/Inspector.tsx": [
+      "chapter.snapshotSave",
+      "chapter.snapshotDiff",
+      "chapter.snapshotRestore",
+      "chapter.snapshotDelete",
+      "chapter.inspectorSnapshotsTab",
+      "chapter.inspectorCastTab",
+      "chapter.inspectorNotesTab",
+      "chapter.commentStageFilter",
+      "chapter.commentAdd",
+      "chapter.commentFocusQuote",
+      "chapter.commentResolve",
+      "chapter.commentDelete"
+    ],
+    "src/components/ManualMergeModal.tsx": [
+      "codex.mergePlotsParallel",
+      "codex.mergePlotsNest"
+    ],
+    "src/components/ManuscriptControls.tsx": [
+      "chapter.focusMode",
+      "chapter.fontSizeDecrease",
+      "chapter.fontSizeIncrease",
+      "chapter.readingWidth",
+      "chapter.writePreviewMode",
+      "chapter.typewriter",
+      "chapter.vanishing",
+      "chapter.bionicPreview"
+    ],
+    "src/components/ManuscriptEditor.tsx": [
+      "chapter.mentionTips",
+      "chapter.contextPreviewClose",
+      "modal.cancel",
+      "chapter.commentAdd",
+      "chapter.formatBold",
+      "chapter.formatItalic",
+      "chapter.formatHeading",
+      "chapter.formatQuote",
+      "chapter.formatSceneBreak",
+      "chapter.formatCharMention",
+      "chapter.formatLoreMention",
+      "chapter.formatFindReplace",
+      "chapter.formatAnnotate"
+    ],
+    "src/components/MapPanel.tsx": [
+      "modal.cancel",
+      "codex.saveMapPin",
+      "codex.createMap",
+      "codex.uploadMap",
+      "codex.mapPin",
+      "codex.editMapPin",
+      "codex.storyBibleSection",
+      "codex.deleteMap",
+      "codex.deleteMapPin"
+    ],
+    "src/components/MentionMarkdown.tsx": [
+      "chapter.reviewMentions"
+    ],
+    "src/components/MentionReviewPanel.tsx": [
+      "chapter.mentionRefresh",
+      "chapter.mentionClose",
+      "chapter.mentionApply"
+    ],
+    "src/components/MindMapViewport.tsx": [
+      "graph.mindMapSearch",
+      "graph.searchPrevNext",
+      "graph.mindMapZoom",
+      "graph.mindMapFullscreen"
+    ],
+    "src/components/Modal.tsx": [
+      "global.modalClose"
+    ],
+    "src/components/Outliner.tsx": [
+      "chapter.aiPreviewPending",
+      "chapter.renumberChapter",
+      "chapter.deleteChapter"
+    ],
+    "src/components/PlotPanelIssuesModal.tsx": [
+      "codex.subplotIssues",
+      "global.modalClose"
+    ],
+    "src/components/PlotThreadsPanel.tsx": [
+      "codex.addPlotThread",
+      "codex.plotThreadReorder",
+      "codex.plotThreadExpand",
+      "codex.plotGenerateSummary",
+      "codex.plotThreadDelete"
+    ],
+    "src/components/ProjectBackupsModal.tsx": [
+      "modal.backups",
+      "global.modalClose"
+    ],
+    "src/components/ProjectCard.tsx": [
+      "library.stashManuscript",
+      "library.deleteManuscript",
+      "library.openProject",
+      "library.chapterCount",
+      "library.statusPill"
+    ],
+    "src/components/RelationshipGraphPanel.tsx": [
+      "modal.cancel",
+      "graph.addRelationship",
+      "graph.linkCharacters"
+    ],
+    "src/components/RelationshipGraphWorkbench.tsx": [
+      "graph.searchRelationships",
+      "graph.searchPrevNext",
+      "graph.fitView",
+      "codex.genealogyCharacter",
+      "graph.editCharacter"
+    ],
+    "src/components/ResearchBoardPanel.tsx": [
+      "modal.cancel",
+      "codex.saveResearchSpark",
+      "codex.researchSpark",
+      "dashboard.clearFilter",
+      "codex.deleteResearchSpark"
+    ],
+    "src/components/ResolveDuplicatesModal.tsx": [
+      "modal.dedupManual",
+      "modal.dedupQuickScan",
+      "modal.dedupAiScan",
+      "modal.dedupAutoMerge",
+      "global.modalClose",
+      "modal.dedupMerge"
+    ],
+    "src/components/SelectedGraphNodeChips.tsx": [
+      "chapter.graphRemoveNode"
+    ],
+    "src/components/Sidebar.tsx": [
+      "global.commandPalette",
+      "global.sidebarLibrary",
+      "global.sidebarHelp"
+    ],
+    "src/components/StashPanel.tsx": [
+      "global.stashPanel",
+      "global.unstashProject"
+    ],
+    "src/components/StoryBibleDedupPanel.tsx": [
+      "modal.dedupQuickScan",
+      "modal.dedupAiScan",
+      "modal.dedupAutoMerge",
+      "modal.dedupMerge",
+      "global.modalClose"
+    ],
+    "src/components/StoryGraphDedupPanel.tsx": [
+      "graph.findDuplicates",
+      "modal.dedupAutoMerge",
+      "modal.dedupMerge"
+    ],
+    "src/components/StoryGraphPanel.tsx": [
+      "graph.addNode",
+      "graph.linkNodes",
+      "graph.findDuplicates",
+      "graph.migrateFromPlots",
+      "graph.legacyPlotThreads",
+      "modal.cancel",
+      "graph.editNode"
+    ],
+    "src/components/SystemSettingsPanel.tsx": [
+      "global.jobQueue",
+      "global.systemSettings",
+      "global.flushQueue",
+      "global.agentPrompts",
+      "global.modalClose",
+      "global.saveSettings"
+    ],
+    "src/components/ThemeToggle.tsx": [
+      "global.themeToggle"
+    ],
+    "src/components/TimelinePanel.tsx": [
+      "codex.editTimelineEvent",
+      "modal.cancel",
+      "codex.saveTimelineEvent",
+      "codex.timelineSelectCandidates",
+      "codex.timelineEvent",
+      "global.modalClose",
+      "codex.deleteTimelineEvent",
+      "dashboard.clearFilter"
+    ],
+    "src/components/graph/GraphInspector.tsx": [
+      "graph.inspectorDeleteEdge",
+      "graph.inspectorEdit",
+      "graph.inspectorDeleteNode"
+    ],
+    "src/components/graph/GraphViewToolbar.tsx": [
+      "graph.searchNodes",
+      "graph.searchPrevNext",
+      "graph.fitView"
+    ],
+    "src/routes/ChapterView.tsx": [
+      "chapter.renumberChapter",
+      "chapter.deleteChapter",
+      "chapter.insertBefore",
+      "chapter.insertAfter",
+      "chapter.duplicateChapter",
+      "chapter.mergeNextChapter",
+      "chapter.copyRevisedToDraft",
+      "chapter.extractMetadata",
+      "chapter.previewDiscard",
+      "chapter.previewKeep",
+      "chapter.focusMode",
+      "chapter.outlineFromNotes",
+      "chapter.outlineFromText",
+      "chapter.toggleLibrary",
+      "chapter.toggleBinder",
+      "chapter.toggleInspector"
+    ],
+    "src/routes/ProjectDashboard.tsx": [
+      "dashboard.backToLibrary",
+      "library.help",
+      "dashboard.writingProgress",
+      "dashboard.nextAction",
+      "dashboard.validateStructure",
+      "dashboard.pipelineFilter",
+      "dashboard.exportManuscript",
+      "dashboard.exportEpub",
+      "dashboard.exportProject",
+      "dashboard.stashManuscript",
+      "dashboard.backups",
+      "dashboard.toggleLibrary",
+      "dashboard.batchExtractOutlines",
+      "dashboard.batchExtractCodex",
+      "dashboard.populateChapterBriefs",
+      "dashboard.autoTitleChapters",
+      "dashboard.deleteManuscript",
+      "dashboard.chapterStatusFilter",
+      "dashboard.removeGaps",
+      "dashboard.pasteChapter",
+      "dashboard.chapterStyleDefaults",
+      "dashboard.planOutline",
+      "dashboard.planChapter",
+      "dashboard.clearFilter",
+      "codex.mergeCharactersManual",
+      "codex.resolveDuplicates",
+      "codex.addCharacter",
+      "codex.genericImporter",
+      "dashboard.tabStoryGraph",
+      "codex.mergePlotsParallel",
+      "codex.mergePlotsNest",
+      "codex.subplotIssues",
+      "codex.addPlotThread",
+      "dashboard.generateChapterBriefs",
+      "codex.timelineEvent",
+      "codex.researchSpark",
+      "modal.cancel",
+      "modal.planOutline",
+      "global.modalClose",
+      "modal.minePreviewReview",
+      "codex.deleteCharacter",
+      "dashboard.chapterTargetDefault"
+    ],
+    "src/routes/ProjectsList.tsx": [
+      "library.togglePanel",
+      "library.help",
+      "library.importEbook",
+      "library.importProject",
+      "library.newManuscript",
+      "modal.cancel"
+    ]
+  },
+  "uncoveredButtons": []
+}

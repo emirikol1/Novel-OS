@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Stop Novel-OS
+Comment=Stop Novel-OS API and web dashboard
+Exec=@NOVEL_OS_HOME@/bin/novel-os-stop.sh
+Path=@NOVEL_OS_HOME@
+Icon=@NOVEL_OS_HOME@/icon/novel-os.svg
+Terminal=false
+Categories=Office;
