@@ -46,4 +46,45 @@ describe("previewPendingStages", () => {
       ),
     ).toEqual(["revised"]);
   });
+
+  it("marks stage for dialogue quote preview", () => {
+    expect(
+      previewPendingStages(
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        { source: "draft", text: "x", original_word_count: 10, preview_word_count: 10, generated_at: null, instructions: "" },
+      ),
+    ).toEqual(["draft"]);
+  });
+
+  it("marks source and revised stages for boundary-alignment preview", () => {
+    expect(
+      previewPendingStages(
+        null,
+        null,
+        null,
+        null,
+        null,
+        {
+          chapter_a: 1,
+          chapter_b: 2,
+          source: "final",
+          adjusted: true,
+          direction: "a_to_b",
+          move_text: "bridge",
+          text_a: "x",
+          text_b: "y",
+          original_word_count_a: 10,
+          original_word_count_b: 12,
+          preview_word_count_a: 11,
+          preview_word_count_b: 13,
+          generated_at: null,
+        },
+      ),
+    ).toEqual(["final", "revised"]);
+  });
 });

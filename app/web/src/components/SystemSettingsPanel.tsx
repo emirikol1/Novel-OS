@@ -4,6 +4,10 @@ import {
   api,
   type AgentPromptSetting,
   type AgentPromptVariant,
+  type JobProgress,
+  type LlmConnectionSettings,
+  type LlmProfile,
+  type LlmProviderOption,
   type LlmQueueSettings,
 } from "../api/client";
 import { SaveStatus, formatSavedAt } from "./EditorSaveBar";
@@ -36,7 +40,58 @@ type DisplayRow = {
   removable: boolean;
   reorderable: boolean;
   batchSize: number;
+  progress?: JobProgress | null;
 };
+
+type LlmConnectionDraft = {
+  provider: string;
+  model: string;
+  base_url: string;
+  api_key: string;
+};
+
+type LlmConnectionIdentity = {
+  provider: string;
+  base_url: string;
+};
+
+const DEFAULT_LOCAL_PROVIDERS: LlmProviderOption[] = [
+  {
+    key: "lmstudio",
+    label: "LM Studio",
+    local: true,
+    default_base_url: "http://127.0.0.1:1234/v1",
+    default_model: "local-model",
+    api_key_required: false,
+  },
+  {
+    key: "ollama",
+    label: "Ollama",
+    local: true,
+    default_base_url: "http://127.0.0.1:11434/v1",
+    default_model: "llama3.2",
+    api_key_required: false,
+  },
+  {
+    key: "openai_compatible",
+    label: "OpenAI-compatible",
+    local: true,
+    default_base_url: "http://127.0.0.1:1234/v1",
+    default_model: "",
+    api_key_required: false,
+  },
+];
+
+const LLM_CONTROL_CLASS =
+  "min-w-0 max-w-full rounded-md border border-ink-line bg-ink-800/80 px-2 py-1.5 text-[11px] leading-snug text-[#d8dce8] placeholder:text-[#6b7280] focus:border-amber/50 focus:outline-none";
+
+function normalizeBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function sameLlmServer(a: LlmConnectionIdentity, b: LlmConnectionIdentity): boolean {
+  return a.provider === b.provider && normalizeBaseUrl(a.base_url) === normalizeBaseUrl(b.base_url);
+}
 
 function batchSizeForJob(jobId: string, running: LlmQueueSettings["running_jobs"]): number {
   const row = (running ?? []).find((r) => r.job_id === jobId);
@@ -59,6 +114,7 @@ function buildRows(queue: LlmQueueSettings): { active: DisplayRow[]; queued: Dis
       removable: true,
       reorderable: false,
       batchSize: r.batch_size && r.batch_size > 0 ? r.batch_size : 1,
+      progress: r.progress,
     })),
     ...activeItems
       .filter((a) => !runningLabels.has(a.label))
@@ -71,6 +127,7 @@ function buildRows(queue: LlmQueueSettings): { active: DisplayRow[]; queued: Dis
         removable: true,
         reorderable: false,
         batchSize: a.job_id ? batchSizeForJob(a.job_id, running) : 1,
+      progress: running.find((r) => r.job_id === a.job_id)?.progress,
       })),
   ];
 
@@ -94,6 +151,78 @@ function chapterBadge(chapter?: number | null) {
     <span className="shrink-0 rounded bg-sky-500/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sky-300">
       Ch.{chapter}
     </span>
+  );
+}
+
+function formatDuration(seconds?: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "estimating";
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  if (minutes > 0) return `${minutes}m ${String(secs).padStart(2, "0")}s`;
+  return `${secs}s`;
+}
+
+function ProgressBlock({
+  progress,
+  compact = false,
+}: {
+  progress: NonNullable<DisplayRow["progress"]>;
+  compact?: boolean;
+}) {
+  const done = progress.completed + progress.skipped + progress.failed;
+  const pct = progress.total > 0 ? Math.min(100, Math.round((done / progress.total) * 100)) : 0;
+  return (
+    <div className={compact ? "mt-1.5" : "mt-2"}>
+      <div className="h-1.5 overflow-hidden rounded-full bg-[#20283a]">
+        <div className="h-full rounded-full bg-amber transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <p className={`${compact ? "mt-1 text-[9.5px]" : "mt-1.5 text-[10.5px]"} leading-snug text-[#8b93a8]`}>
+        {done}/{progress.total} {progress.unit}
+        {progress.skipped > 0 ? ` · ${progress.skipped} skipped` : ""}
+        {progress.failed > 0 ? ` · ${progress.failed} failed` : ""}
+        {" · "}
+        elapsed {formatDuration(progress.elapsed_seconds)}
+        {" · "}
+        ETA {formatDuration(progress.remaining_seconds)}
+      </p>
+      {progress.current && (
+        <p className={`${compact ? "text-[9.5px]" : "text-[10.5px]"} truncate text-[#c8cedd]`}>
+          {progress.current}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function LongRunningJobs({ queue }: { queue: LlmQueueSettings }) {
+  const jobs = (queue.running_jobs ?? []).filter((job) => job.progress);
+  if (jobs.length === 0) return null;
+  return (
+    <div className="mb-3 rounded-lg border border-amber/25 bg-amber/5 px-3 py-2.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber">
+          Long-running jobs
+        </p>
+        <span className="text-[10px] text-[#8b93a8]">rolling ETA from last 3 completed items</span>
+      </div>
+      <ul className="space-y-2">
+        {jobs.map((job) => (
+          <li key={job.job_id} className="rounded-md border border-[#2a3348] bg-[#121826] px-2.5 py-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {chapterBadge(job.chapter)}
+              <span className="rounded bg-[#263044] px-1.5 py-0.5 text-[10px] font-semibold text-[#c8cedd]">
+                {job.screen}
+              </span>
+              <p className="min-w-0 flex-1 truncate text-[11px] font-semibold text-[#e8ebf2]">{job.label}</p>
+            </div>
+            {job.progress && <ProgressBlock progress={job.progress} />}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -301,6 +430,7 @@ export function QueueJobPopover({
                   <p className="mt-0.5 text-[10px] text-[#8b93a8]">
                     {formatSubmittedAt(row.submittedAt)}
                   </p>
+                  {row.progress && <ProgressBlock progress={row.progress} compact />}
                 </div>
                 <RowActions row={row} />
               </div>
@@ -369,6 +499,22 @@ export default function SystemSettingsPanel() {
   const [promptVariant, setPromptVariant] = useState<AgentPromptVariant>("current");
   const [customPrompt, setCustomPrompt] = useState("");
   const [promptSaving, setPromptSaving] = useState(false);
+  const [llmSettings, setLlmSettings] = useState<LlmConnectionSettings | null>(null);
+  const [llmDraft, setLlmDraft] = useState<LlmConnectionDraft>({
+    provider: "lmstudio",
+    model: "",
+    base_url: "",
+    api_key: "",
+  });
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [profileName, setProfileName] = useState("");
+  const [llmDirty, setLlmDirty] = useState(false);
+  const [llmSaving, setLlmSaving] = useState(false);
+  const [llmTesting, setLlmTesting] = useState(false);
+  const [llmTestMessage, setLlmTestMessage] = useState("");
+  const [llmLastSaved, setLlmLastSaved] = useState<string | null>(null);
+  const [modelListMessage, setModelListMessage] = useState("");
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [queue, setQueue] = useState<LlmQueueSettings | null>(null);
   const [busy, setBusy] = useState<null | "restart">(null);
@@ -405,6 +551,20 @@ export default function SystemSettingsPanel() {
     api.agentPromptSettings().then((s) => {
       setPromptSettings(s.prompts);
       if (!agentsDir && s.agents_dir) setAgentsDir(s.agents_dir);
+    }).catch(() => {});
+    api.llmConnectionSettings().then((s) => {
+      setLlmSettings(s);
+      const activeProfile = s.profiles.find((p) => p.id === s.active_profile_id);
+      setSelectedProfileId(s.active_profile_id || "");
+      setProfileName(activeProfile?.name ?? "");
+      setLlmDraft({
+        provider: s.provider,
+        model: s.model,
+        base_url: s.base_url,
+        api_key: "",
+      });
+      setLlmDirty(false);
+      if (s.api_key_set) setLlmLastSaved(formatSavedAt());
     }).catch(() => {});
     refreshQueue();
   }, [agentsDir, refreshQueue]);
@@ -543,6 +703,150 @@ export default function SystemSettingsPanel() {
     }
   }
 
+  function patchLlmDraft(patch: Partial<LlmConnectionDraft>) {
+    setLlmDraft((prev) => ({ ...prev, ...patch }));
+    setLlmDirty(true);
+    setLlmTestMessage("");
+  }
+
+  const providerOptions = llmSettings?.allowed_providers.length
+    ? llmSettings.allowed_providers
+    : DEFAULT_LOCAL_PROVIDERS;
+  const selectedProfile = llmSettings?.profiles.find((profile) => profile.id === selectedProfileId) ?? null;
+
+  function llmProviderLabel(provider: string): string {
+    return providerOptions.find((p) => p.key === provider)?.label ?? provider;
+  }
+
+  function llmProfileOptionLabel(profile: LlmProfile): string {
+    const model = profile.model || "model not set";
+    return `${profile.name} · ${model}`;
+  }
+
+  function draftMatchesProfile(profile: LlmProfile | null): boolean {
+    if (!profile) return false;
+    return profile.provider === llmDraft.provider
+      && profile.model === llmDraft.model
+      && normalizeBaseUrl(profile.base_url) === normalizeBaseUrl(llmDraft.base_url);
+  }
+
+  function savedKeyAppliesToDraft(): boolean {
+    if (!llmSettings?.api_key_set) return false;
+    return sameLlmServer(llmSettings, llmDraft);
+  }
+
+  const selectedProfileKeyApplies = Boolean(
+    selectedProfile?.api_key_set && sameLlmServer(selectedProfile, llmDraft),
+  );
+  const draftApiKeySet = Boolean(llmDraft.api_key.trim()) || savedKeyAppliesToDraft() || selectedProfileKeyApplies;
+  const activeProviderLabel = llmSettings ? llmProviderLabel(llmSettings.provider) : "";
+  const llmConnectionSummary = llmSettings
+    ? `${activeProviderLabel} · ${llmSettings.model || "model not set"} · ${llmSettings.base_url || "URL not set"} · key ${llmSettings.api_key_set ? "SET" : "NOT SET"}`
+    : "";
+
+  function selectLlmProvider(provider: string) {
+    const option = providerOptions.find((p) => p.key === provider);
+    setSelectedProfileId("");
+    setProfileName("");
+    patchLlmDraft({
+      provider,
+      model: option?.default_model ?? "",
+      base_url: option?.default_base_url ?? "",
+      api_key: "",
+    });
+    setAvailableModels([]);
+    setModelListMessage("");
+  }
+
+  function selectLlmProfile(profileId: string) {
+    const profile = llmSettings?.profiles.find((p) => p.id === profileId);
+    setSelectedProfileId(profileId);
+    if (!profile) {
+      setProfileName("");
+      return;
+    }
+    setProfileName(profile.name);
+    setLlmDraft({
+      provider: profile.provider,
+      model: profile.model,
+      base_url: profile.base_url,
+      api_key: "",
+    });
+    setLlmDirty(true);
+    setAvailableModels([]);
+    setModelListMessage("");
+    setLlmTestMessage("");
+  }
+
+  async function saveLlmConnection(saveProfile = false) {
+    setLlmSaving(true);
+    try {
+      const profileId = saveProfile
+        ? selectedProfileId || null
+        : draftMatchesProfile(selectedProfile) ? selectedProfileId : null;
+      const saved = await api.saveLlmConnectionSettings({
+        provider: llmDraft.provider,
+        model: llmDraft.model,
+        base_url: llmDraft.base_url,
+        api_key: llmDraft.api_key ? llmDraft.api_key : null,
+        profile_id: profileId,
+        profile_name: saveProfile ? profileName : "",
+        save_profile: saveProfile,
+      });
+      setLlmSettings(saved);
+      const activeProfile = saved.profiles.find((p) => p.id === saved.active_profile_id);
+      setSelectedProfileId(saved.active_profile_id || "");
+      setProfileName(activeProfile?.name ?? (saveProfile ? profileName : ""));
+      setLlmDraft({
+        provider: saved.provider,
+        model: saved.model,
+        base_url: saved.base_url,
+        api_key: "",
+      });
+      setLlmDirty(false);
+      setLlmLastSaved(formatSavedAt());
+      toast(saveProfile ? "AI profile saved" : "AI connection settings saved", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setLlmSaving(false);
+    }
+  }
+
+  async function testLlmConnection() {
+    setLlmTesting(true);
+    setLlmTestMessage("");
+    try {
+      const result = await api.testLlmConnectionSettings({
+        provider: llmDraft.provider,
+        model: llmDraft.model,
+        base_url: llmDraft.base_url,
+        api_key: llmDraft.api_key ? llmDraft.api_key : null,
+      });
+      setLlmTestMessage(result.message);
+      toast(result.message, result.ok ? "success" : "error");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setLlmTestMessage(msg);
+      toast(msg, "error");
+    } finally {
+      setLlmTesting(false);
+    }
+  }
+
+  async function listLlmModels() {
+    setModelListMessage("");
+    try {
+      const result = await api.listLlmModels();
+      setAvailableModels(result.models);
+      setModelListMessage(result.message || (result.models.length ? `${result.models.length} model(s) found` : "No models returned"));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setModelListMessage(msg);
+      toast(msg, "error");
+    }
+  }
+
   const previewPrompt = promptVariant === "recommended"
     ? promptEditor?.recommended_default
     : promptVariant === "custom"
@@ -558,11 +862,18 @@ export default function SystemSettingsPanel() {
           onClick={() => setOpen((o) => !o)}
           className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12.5px] font-medium text-[#aab2c4] transition-colors hover:bg-ink-800 hover:text-white"
         >
-          <span className="flex items-center gap-1.5">
-            AI settings
-            {hasWork && !open && (
-              <span className="rounded-full bg-amber/25 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber">
-                busy
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-1.5">
+              AI settings
+              {hasWork && !open && (
+                <span className="rounded-full bg-amber/25 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber">
+                  busy
+                </span>
+              )}
+            </span>
+            {llmConnectionSummary && (
+              <span className="mt-0.5 block max-w-full break-all text-[10px] font-normal leading-snug text-[#8b93a8]">
+                {llmConnectionSummary}
               </span>
             )}
           </span>
@@ -578,6 +889,164 @@ export default function SystemSettingsPanel() {
 
       {open && (
         <div className="mt-2 space-y-3 px-1">
+          <div className="overflow-hidden rounded-lg border border-ink-line bg-ink-800/40 px-3 py-3">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="block text-[10.5px] font-semibold uppercase tracking-wider text-[#8b93a8]">
+                AI connectivity
+              </label>
+              {llmSettings?.local_only && (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-emerald-300">
+                  local only
+                </span>
+              )}
+            </div>
+            <p className="mb-2 text-[10.5px] leading-relaxed text-[#8b93a8]">
+              Configure the model endpoint Novel OS uses for agent calls. API keys are write-only; saved keys are never shown again.
+            </p>
+            <div className="grid gap-2">
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#8b93a8]" htmlFor="llm-profile">
+                Profile
+              </label>
+              <select
+                id="llm-profile"
+                value={selectedProfileId}
+                onChange={(e) => selectLlmProfile(e.target.value)}
+                className={LLM_CONTROL_CLASS}
+              >
+                <option value="">Manual connection</option>
+                {(llmSettings?.profiles ?? []).map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {llmProfileOptionLabel(profile)}
+                  </option>
+                ))}
+              </select>
+              {selectedProfile && (
+                <p className="max-w-full break-all text-[10px] leading-snug text-[#8b93a8]">
+                  {llmProviderLabel(selectedProfile.provider)}
+                  {" · "}
+                  {selectedProfile.model || "model not set"}
+                  {" · "}
+                  {selectedProfile.base_url || "URL not set"}
+                </p>
+              )}
+
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#8b93a8]" htmlFor="llm-profile-name">
+                Profile name
+              </label>
+              <input
+                id="llm-profile-name"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                placeholder="e.g. Local LM Studio, OpenAI drafting, Gemini research"
+                className={LLM_CONTROL_CLASS}
+              />
+
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#8b93a8]" htmlFor="llm-provider">
+                Provider
+              </label>
+              <select
+                id="llm-provider"
+                value={llmDraft.provider}
+                onChange={(e) => selectLlmProvider(e.target.value)}
+                className={LLM_CONTROL_CLASS}
+              >
+                {providerOptions.map((provider) => (
+                  <option key={provider.key} value={provider.key}>
+                    {provider.label}{provider.local ? " (local)" : ""}
+                  </option>
+                ))}
+              </select>
+
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#8b93a8]" htmlFor="llm-model">
+                Model
+              </label>
+              <input
+                id="llm-model"
+                value={llmDraft.model}
+                onChange={(e) => patchLlmDraft({ model: e.target.value })}
+                placeholder="model id"
+                list="llm-model-options"
+                className={LLM_CONTROL_CLASS}
+              />
+              <datalist id="llm-model-options">
+                {availableModels.map((model) => <option key={model} value={model} />)}
+              </datalist>
+
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#8b93a8]" htmlFor="llm-base-url">
+                Access URL
+              </label>
+              <input
+                id="llm-base-url"
+                value={llmDraft.base_url}
+                onChange={(e) => patchLlmDraft({ base_url: e.target.value })}
+                placeholder="http://127.0.0.1:1234/v1"
+                className={LLM_CONTROL_CLASS}
+              />
+
+              <label
+                className="flex items-center justify-between gap-2 text-[10.5px] font-semibold uppercase tracking-wider text-[#8b93a8]"
+                htmlFor="llm-api-key"
+              >
+                <span>API key</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                    draftApiKeySet ? "bg-emerald-500/15 text-emerald-300" : "bg-[#20283a] text-[#8b93a8]"
+                  }`}
+                >
+                  {draftApiKeySet ? "SET" : "NOT SET"}
+                </span>
+              </label>
+              <input
+                id="llm-api-key"
+                type="password"
+                value={llmDraft.api_key}
+                onChange={(e) => patchLlmDraft({ api_key: e.target.value })}
+                placeholder={draftApiKeySet ? "Saved key present - leave blank to keep it" : "Optional for most local servers"}
+                className={LLM_CONTROL_CLASS}
+              />
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void saveLlmConnection()}
+                disabled={llmSaving || !llmDirty}
+                className="rounded-md border border-amber/40 bg-amber/10 px-2.5 py-1 text-[11px] font-semibold text-amber transition-colors hover:bg-amber/15 disabled:opacity-40"
+              >
+                {llmSaving ? "Saving..." : "Save connection"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveLlmConnection(true)}
+                disabled={llmSaving || (!profileName.trim() && !selectedProfileId)}
+                className="rounded-md border border-ink-line px-2.5 py-1 text-[11px] font-semibold text-[#c8cedd] transition-colors hover:bg-ink-800 disabled:opacity-40"
+              >
+                {selectedProfileId ? "Update profile" : "Save profile"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void testLlmConnection()}
+                disabled={llmTesting}
+                className="rounded-md border border-ink-line px-2.5 py-1 text-[11px] font-semibold text-[#c8cedd] transition-colors hover:bg-ink-800 disabled:opacity-40"
+              >
+                {llmTesting ? "Testing..." : "Test"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void listLlmModels()}
+                className="rounded-md border border-ink-line px-2.5 py-1 text-[11px] font-semibold text-[#c8cedd] transition-colors hover:bg-ink-800"
+              >
+                List models
+              </button>
+              <SaveStatus dirty={llmDirty} saving={llmSaving} lastSaved={llmLastSaved} className="text-[#aab2c4]" />
+            </div>
+            {(llmTestMessage || modelListMessage) && (
+              <p className="mt-2 text-[10.5px] leading-relaxed text-[#8b93a8]">
+                {llmTestMessage || modelListMessage}
+              </p>
+            )}
+          </div>
+
           <div>
             <label className="mb-1 block text-[10.5px] font-semibold uppercase tracking-wider text-[#8b93a8]">
               Concurrent LLM requests
@@ -606,6 +1075,7 @@ export default function SystemSettingsPanel() {
                 className="text-[#aab2c4]"
               />
             </div>
+            {queue && <LongRunningJobs queue={queue} />}
             {queue && <QueueJobPopover queue={queue} onQueueChange={setQueue} />}
           </div>
 

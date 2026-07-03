@@ -108,11 +108,11 @@ def test_batch_extract_codex_runs_three_passes_per_chapter(tmp_path, monkeypatch
 
     result = batch_extract_codex(str(proj), skip_existing=False)
     assert result["generated"] == [
-        {"chapter": 1, "kind": "plots"},
         {"chapter": 1, "kind": "characters"},
+        {"chapter": 1, "kind": "plots"},
         {"chapter": 1, "kind": "bible"},
     ]
-    assert calls == [(1, "plots"), (1, "characters"), (1, "bible")]
+    assert calls == [(1, "characters"), (1, "plots"), (1, "bible")]
 
 
 def test_batch_extract_outlines_skips_saved_outline(tmp_path, monkeypatch):

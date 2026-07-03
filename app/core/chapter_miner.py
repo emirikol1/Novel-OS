@@ -111,8 +111,14 @@ Do not extract plot thread lists or story bible world rules.
 1. Brief note (2–3 sentences) on character focus in this chapter.
 2. Emit `[CHAPTER_CHARACTER_UPDATE]` as your **final** block:
 
-- `Characters_Present` — bulleted full names of characters directly present in scenes (POV, action, dialogue)
-- `Characters_Mentioned` — bulleted full names referenced in dialogue or narration but not directly present on-page
+Presence rules:
+- Put a character in `Characters_Present` when they are directly on-page in the current scene: POV, speaking, acting, reacting, moving, being addressed in present action, or otherwise physically/actively participating.
+- Put a character in `Characters_Mentioned` only when they are referenced by dialogue, narration, memory, rumor, plan, report, or backstory but are not directly present on-page.
+- If the prose uses a first name, surname, title, nickname, alias, or `[[char:...]]` label for a known character who is on-page, still list the character's full name under `Characters_Present`.
+- Do not put the same character in both fields. `Characters_Present` takes precedence over `Characters_Mentioned`.
+
+- `Characters_Present` — bulleted full names of characters directly present in scenes
+- `Characters_Mentioned` — bulleted full names referenced but not directly present on-page
 - `New_Characters` — bulleted. Format: `Full Name | role | one-sentence description`. Roles: protagonist, antagonist, supporting, minor
 - `Character_Updates` — bulleted. Format: `Full Name: field=value` (fields: location, emotional_state, desire, goal, fear, weakness, strength, secret, notes, physical_description, age, alias, aliases)
 - `Relationship_Updates` — bulleted. Format: `Character A | canonical role or role(subrole) | Character B | optional notes`.

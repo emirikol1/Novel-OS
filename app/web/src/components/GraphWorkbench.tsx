@@ -31,7 +31,13 @@ import ToolTip from "./ToolTip";
 import StoryGraphEdge from "./graph/StoryGraphEdge";
 import StoryGraphNodeCard from "./graph/StoryGraphNodeCard";
 import { TimelineActColumns, TimelineChapterColumns } from "./graph/TimelineColumns";
-import { nodeById, nodeDisplayEdges } from "../lib/storyGraph";
+import {
+  buildChapterBeatGraph,
+  focusedStoryGraph,
+  isChapterBeatGraphNodeId,
+  nodeById,
+  type ChapterBeatsByChapter,
+} from "../lib/storyGraph";
 import {
   actAtPosition,
   computeActBandRects,
@@ -58,6 +64,7 @@ const MAX_INSPECTOR = 480;
 const DEFAULT_INSPECTOR = 288;
 const RADIAL_LAYOUT_SAVE_MS = 700;
 const STRUCTURED_LAYOUT_SAVE_MS = 400;
+const EMPTY_CHAPTER_BEATS: ChapterBeatsByChapter = {};
 
 const nodeTypes = { storyGraphNode: StoryGraphNodeCard };
 const edgeTypes = { storyGraphEdge: StoryGraphEdge };
@@ -87,6 +94,7 @@ type GraphWorkbenchProps = {
   edges: StoryGraphEdgeSummary[];
   characters: CharacterSummary[];
   chapters?: ChapterSummary[];
+  chapterBeats?: ChapterBeatsByChapter;
   selectedId: string | null;
   linkSourceId: string | null;
   onSelectNode: (id: string | null) => void;
@@ -103,6 +111,7 @@ function GraphWorkbenchInner({
   edges,
   characters,
   chapters = [],
+  chapterBeats = EMPTY_CHAPTER_BEATS,
   selectedId,
   linkSourceId,
   onSelectNode,
@@ -135,12 +144,18 @@ function GraphWorkbenchInner({
     () => new Map(characters.map((c) => [c.id, c.full_name])),
     [characters],
   );
-  const nodesMap = useMemo(() => nodeById(nodes), [nodes]);
-  const displayEdges = useMemo(() => nodeDisplayEdges(nodes, edges), [nodes, edges]);
+  const augmentedGraph = useMemo(
+    () => buildChapterBeatGraph(nodes, edges, chapterBeats),
+    [nodes, edges, chapterBeats],
+  );
+  const graphNodes = augmentedGraph.nodes;
+  const graphEdges = augmentedGraph.edges;
+  const realNodesMap = useMemo(() => nodeById(nodes), [nodes]);
+  const nodesMap = useMemo(() => nodeById(graphNodes), [graphNodes]);
 
   const actBands = useMemo(
-    () => (viewMode === "acts" ? computeActLayerLayout(nodes, { chapterCount }).bands : []),
-    [viewMode, nodes, chapterCount],
+    () => (viewMode === "acts" ? computeActLayerLayout(graphNodes, { chapterCount }).bands : []),
+    [viewMode, graphNodes, chapterCount],
   );
   const timelineActColumns = useMemo(
     () => (viewMode === "timeline" && timelineScope === "acts" ? computeTimelineActColumns() : []),
@@ -156,7 +171,7 @@ function GraphWorkbenchInner({
 
   const searchItems = useMemo(
     () =>
-      nodes.map((node) => ({
+      graphNodes.map((node) => ({
         id: node.id,
         haystack: [
           node.title,
@@ -166,7 +181,7 @@ function GraphWorkbenchInner({
           ...node.linked_character_ids.map((cid) => charNames.get(cid) ?? cid),
         ].join(" ").toLowerCase(),
       })),
-    [nodes, charNames],
+    [graphNodes, charNames],
   );
 
   const matchedIds = useMemo(() => {
@@ -180,32 +195,54 @@ function GraphWorkbenchInner({
     [searchItems, matchedIds],
   );
 
+  const activeMatchId = matchList[matchIndex] ?? null;
+  const focused = useMemo(
+    () => focusedStoryGraph(graphNodes, graphEdges, selectedId ?? activeMatchId),
+    [graphNodes, graphEdges, selectedId, activeMatchId],
+  );
+  const visibleNodes = focused.nodes;
+  const visibleEdges = focused.edges;
+  const visibleMatchedIds = useMemo(
+    () => (activeMatchId ? new Set([activeMatchId]) : matchedIds),
+    [activeMatchId, matchedIds],
+  );
+
   const flowNodeOptions = useMemo(
     () => ({
       charNames,
       selectedId,
       linkSourceId,
-      matchedIds,
-      activeMatchId: matchList[matchIndex] ?? null,
+      matchedIds: visibleMatchedIds,
+      activeMatchId,
       layoutMode,
       chapterCount,
       chapters,
     }),
-    [charNames, selectedId, linkSourceId, matchedIds, matchList, matchIndex, layoutMode, chapterCount, chapters],
+    [
+      charNames,
+      selectedId,
+      linkSourceId,
+      visibleMatchedIds,
+      activeMatchId,
+      layoutMode,
+      chapterCount,
+      chapters,
+    ],
   );
 
   useEffect(() => {
     setMatchIndex(0);
-  }, [searchQuery]);
+    if (searchQuery.trim()) onSelectNode(null);
+  }, [searchQuery, onSelectNode]);
 
   useEffect(() => {
-    setFlowNodes(toFlowNodes(nodes, edges, flowNodeOptions));
-    setFlowEdges(toFlowEdges(nodes, edges));
-  }, [nodes, edges, flowNodeOptions]);
+    setFlowNodes(toFlowNodes(visibleNodes, visibleEdges, flowNodeOptions));
+    setFlowEdges(toFlowEdges(visibleNodes, visibleEdges));
+  }, [visibleNodes, visibleEdges, flowNodeOptions]);
 
   useEffect(() => {
     fitView({ padding: 0.2, duration: 200 });
-  }, [nodes.length, viewMode, timelineScope, fitView]);
+  }, [visibleNodes.length, viewMode, timelineScope, fitView]);
 
   useEffect(() => {
     const activeId = matchList[matchIndex];
@@ -231,7 +268,9 @@ function GraphWorkbenchInner({
     const updates = [...batch.entries()];
     await Promise.all(
       updates.map(([nodeId, layout]) =>
-        api.updateStoryGraphNode(projectId, nodeId, { layout }),
+        isChapterBeatGraphNodeId(nodeId)
+          ? Promise.resolve(null)
+          : api.updateStoryGraphNode(projectId, nodeId, { layout }),
       ),
     );
 
@@ -268,7 +307,7 @@ function GraphWorkbenchInner({
   const patchNodeAct = useCallback(
     async (nodeId: string, act: 1 | 2 | 3) => {
       const node = nodesMap.get(nodeId);
-      if (!node || node.act === act) return;
+      if (!node || isChapterBeatGraphNodeId(nodeId) || node.act === act) return;
 
       updateLocalNode(nodeId, { act });
       try {
@@ -284,7 +323,7 @@ function GraphWorkbenchInner({
   const patchNodePin = useCallback(
     async (nodeId: string, fromChapter: number | null, toChapter: number) => {
       const node = nodesMap.get(nodeId);
-      if (!node || fromChapter === toChapter) return;
+      if (!node || isChapterBeatGraphNodeId(nodeId) || fromChapter === toChapter) return;
 
       const prevPins = [...(node.chapter_pins ?? [])];
 
@@ -312,6 +351,7 @@ function GraphWorkbenchInner({
 
   const handleStructuredDragStop = useCallback(
     (nodeId: string, position: { x: number; y: number }) => {
+      if (isChapterBeatGraphNodeId(nodeId)) return;
       const node = nodesMap.get(nodeId);
       if (!node) return;
 
@@ -365,6 +405,7 @@ function GraphWorkbenchInner({
         const next = applyNodeChanges(changes, current);
         for (const change of changes) {
           if (change.type === "position" && change.dragging === false && change.position) {
+            if (isChapterBeatGraphNodeId(change.id)) continue;
             if (viewMode === "radial") {
               queueLayoutSave(change.id, change.position);
             } else {
@@ -392,9 +433,13 @@ function GraphWorkbenchInner({
 
   const onNodeClickHandler = useCallback(
     (_event: React.MouseEvent, node: Node<StoryGraphFlowNodeData>) => {
+      if (searchQuery.trim()) {
+        setSearchQuery("");
+        setMatchIndex(0);
+      }
       onNodeClick(node.id);
     },
-    [onNodeClick],
+    [onNodeClick, searchQuery],
   );
 
   const onResizePointerDown = useCallback(
@@ -424,6 +469,17 @@ function GraphWorkbenchInner({
   );
 
   const selected = selectedId ? nodesMap.get(selectedId) ?? null : null;
+
+  const saveSelectedNotes = useCallback(
+    async (notes: string) => {
+      if (!selected || isChapterBeatGraphNodeId(selected.id)) return;
+      const updated = await api.updateStoryGraphNode(projectId, selected.id, {
+        description: notes,
+      });
+      updateLocalNode(selected.id, updated);
+    },
+    [projectId, selected, updateLocalNode],
+  );
 
   const timelineBreadcrumb =
     viewMode === "timeline" ? (
@@ -486,8 +542,14 @@ function GraphWorkbenchInner({
         onSearchQueryChange={setSearchQuery}
         matchCount={matchList.length}
         matchIndex={matchIndex}
-        onPrevMatch={() => setMatchIndex((i) => (matchList.length ? (i - 1 + matchList.length) % matchList.length : 0))}
-        onNextMatch={() => setMatchIndex((i) => (matchList.length ? (i + 1) % matchList.length : 0))}
+        onPrevMatch={() => {
+          onSelectNode(null);
+          setMatchIndex((i) => (matchList.length ? (i - 1 + matchList.length) % matchList.length : 0));
+        }}
+        onNextMatch={() => {
+          onSelectNode(null);
+          setMatchIndex((i) => (matchList.length ? (i + 1) % matchList.length : 0));
+        }}
         timelineBreadcrumb={timelineBreadcrumb}
       />
       <div className="flex min-h-[520px]">
@@ -546,10 +608,15 @@ function GraphWorkbenchInner({
             <GraphInspector
               node={selected}
               charNames={charNames}
-              edges={displayEdges}
+              edges={visibleEdges}
               nodesMap={nodesMap}
-              onEdit={() => selected && onEditNode(selected)}
-              onDelete={() => selected && onDeleteNode(selected.id)}
+              onEdit={() => {
+                if (selected && realNodesMap.has(selected.id)) onEditNode(selected);
+              }}
+              onSaveNotes={saveSelectedNotes}
+              onDelete={() => {
+                if (selected && realNodesMap.has(selected.id)) onDeleteNode(selected.id);
+              }}
               onDeleteEdge={onDeleteEdge}
             />
           </aside>

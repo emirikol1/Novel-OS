@@ -154,6 +154,12 @@
 
   .prose-manuscript { font-family: var(--font-prose); font-size: 1.075rem; line-height: 1.85; color: var(--color-ink-text); }
   .prose-manuscript p { margin: 0 0 1.1em; text-align: justify; hyphens: auto; }
+  .prose-manuscript--indented p { margin: 0; text-indent: 1.5em; }
+  .prose-manuscript--indented > p:first-of-type,
+  .prose-manuscript--indented h1 + p,
+  .prose-manuscript--indented h2 + p,
+  .prose-manuscript--indented h3 + p,
+  .prose-manuscript--indented hr + p { text-indent: 0; }
   .prose-manuscript > p:first-of-type::first-letter {
     font-family: var(--font-display); font-weight: 600; float: left;
     font-size: 3.1em; line-height: 0.82; padding: 0.04em 0.08em 0 0; color: var(--color-amber-deep);

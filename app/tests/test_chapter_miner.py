@@ -147,6 +147,8 @@ def test_character_mine_prompt_includes_mentioned_field():
     prompt = _character_prompt(1, "Sample prose.", "draft", "Opening")
     assert "Characters_Mentioned" in prompt
     assert "Characters_Present" in prompt
+    assert "directly on-page" in prompt
+    assert "Do not put the same character in both fields" in prompt
     assert "Relationship_Updates" in prompt
     assert "employer" in prompt
     assert "custom label" in prompt

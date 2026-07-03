@@ -21,6 +21,7 @@ from story_graph import (
     StoryGraphNode,
     migrate_plot_threads_to_graph,
 )
+from reviewable_changes import ReviewableChange
 from state_migration import (
     CURRENT_SCHEMA_VERSION,
     LEGACY_SCHEMA_VERSION,
@@ -176,6 +177,7 @@ class StyleProfile:
     description_ratio: float = 0.3  # 0-1
     internal_monologue_ratio: float = 0.2  # 0-1
     paragraph_max_sentences: int = 5
+    paragraph_format: str = "block"  # block, indented
     chapter_target_words: int = 2500
     scene_break_marker: str = "***"
     dialect_notes: str = ""
@@ -244,6 +246,7 @@ class StoryState:
         self.story_graph_edges: Dict[str, StoryGraphEdge] = {}
         self.chapter_briefs: Dict[int, ChapterBrief] = {}
         self.chapter_beats: Dict[int, List[ChapterBeat]] = {}
+        self.reviewable_changes: Dict[str, ReviewableChange] = {}
         
         # Session tracking
         self.session_log: List[Dict[str, Any]] = []
@@ -318,6 +321,10 @@ class StoryState:
             int(k): [ChapterBeat.from_dict(b) for b in beats]
             for k, beats in data.get('chapter_beats', {}).items()
         }
+        self.reviewable_changes = {
+            k: ReviewableChange.from_dict(v)
+            for k, v in data.get('reviewable_changes', {}).items()
+        }
         self.session_log = data.get('session_log', [])
     
     def _load_state(self):
@@ -359,6 +366,9 @@ class StoryState:
             'chapter_beats': {
                 k: [b.to_dict() for b in beats]
                 for k, beats in self.chapter_beats.items()
+            },
+            'reviewable_changes': {
+                k: v.to_dict() for k, v in self.reviewable_changes.items()
             },
             'session_log': self.session_log,
             'last_saved': datetime.now().isoformat(),
@@ -681,6 +691,9 @@ class StoryState:
         return self.chapter_briefs.get(chapter_number)
 
     def set_chapter_brief(self, brief: ChapterBrief) -> ChapterBrief:
+        from chapter_brief_utils import migrate_legacy_brief_beats_to_chapter_beats  # noqa: WPS433
+
+        migrate_legacy_brief_beats_to_chapter_beats(self, brief.chapter_number, brief)
         self.chapter_briefs[brief.chapter_number] = brief
         self._log_action('chapter_brief_saved', {'chapter': brief.chapter_number})
         return brief

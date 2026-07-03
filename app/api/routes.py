@@ -30,6 +30,7 @@ from .models import (
     BibleDuplicatesReport, BibleDedupeMerge, BibleAutoDedupeResult, BibleDedupStatus,
     BackupsReport, BackupActionResult, CreateNamedBackup, NamedBackupMeta, ReorderPlotThreads,
     NestPlotThreads, SystemPromptSettings, AgentPromptSettings, UpdateAgentPromptSetting,
+    LlmConnectionSettings, UpdateLlmConnectionSettings, LlmConnectionTestResult, LlmModelListResult,
     LlmQueueEntry, RunningJobEntry, LlmQueueSettings, LlmQueueSettingsUpdate, LlmQueueFlushResult, LlmQueueReorder, LlmQueueMove,
     RestartResult, JobCancelResult,
     PlotPanelIssuesReport, ResolvePlotPanelIssue, PlotPanelResolveResult, PlotPanelAutoResolveResult,
@@ -41,6 +42,8 @@ from .models import (
     StoryGraphNodeSummary, CreateStoryGraphNode, UpdateStoryGraphNode,
     StoryGraphEdgeSummary, CreateStoryGraphEdge, UpdateStoryGraphEdge,
     StoryGraphMigrateRequest, StoryGraphMigrateResult,
+    ReviewableChangeModel, GenerateGraphSuggestionsRequest, GenerateGraphSuggestionsResult,
+    MineAllRequest,
     PinStoryGraphNodeRequest, EligibleGraphNodesResult,
     ChapterBeatSummary, CreateChapterBeat, UpdateChapterBeat,
     ReorderChapterBeats, SetChapterBeats,
@@ -64,7 +67,7 @@ from .services import (
     BadRequest, ChapterNotFound, CharacterNotFound, NoSourceArtifact, NothingToUnfinalize,
     PlotThreadNotFound, ProjectNotFound, ProjectService, TimelineEventNotFound,
     StoryGraphNodeNotFound, StoryGraphEdgeNotFound, ChapterBriefNotFound,
-    ChapterBeatNotFound,
+    ChapterBeatNotFound, ReviewableChangeNotFound,
     ResearchSparkNotFound, ProjectMapNotFound, MapPinNotFound,
 )
 
@@ -113,6 +116,8 @@ def update_project_style(project_id: str, body: UpdateStyleProfile, svc: Project
         return svc.update_style_profile(project_id, body.model_dump())
     except ProjectNotFound:
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/projects/{project_id}/outline/preview", response_model=PlanOutlinePreview)
@@ -822,6 +827,107 @@ def delete_timeline_event(project_id: str, event_id: str, svc: ProjectService = 
         raise HTTPException(status_code=404, detail=f"Timeline event '{event_id}' not found")
 
 
+@router.get("/projects/{project_id}/reviewable-changes", response_model=list[ReviewableChangeModel])
+def list_reviewable_changes(
+    project_id: str,
+    status: str | None = None,
+    type: str | None = None,
+    source: str | None = None,
+    svc: ProjectService = Depends(get_service),
+):
+    try:
+        return svc.list_reviewable_changes(project_id, status=status, kind=type, source=source)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+
+
+@router.post(
+    "/projects/{project_id}/reviewable-changes/generate-graph-suggestions",
+    response_model=GenerateGraphSuggestionsResult,
+)
+def generate_graph_suggestions(
+    project_id: str,
+    body: GenerateGraphSuggestionsRequest,
+    svc: ProjectService = Depends(get_service),
+):
+    try:
+        return svc.generate_graph_suggestions(project_id, auto_apply=body.auto_apply)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/projects/{project_id}/reviewable-changes/{change_id}/apply", response_model=ReviewableChangeModel)
+def apply_reviewable_change(project_id: str, change_id: str, svc: ProjectService = Depends(get_service)):
+    try:
+        return svc.apply_reviewable_change(project_id, change_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ReviewableChangeNotFound:
+        raise HTTPException(status_code=404, detail=f"Reviewable change '{change_id}' not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/projects/{project_id}/reviewable-changes/{change_id}/dismiss", response_model=ReviewableChangeModel)
+def dismiss_reviewable_change(project_id: str, change_id: str, svc: ProjectService = Depends(get_service)):
+    try:
+        return svc.dismiss_reviewable_change(project_id, change_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ReviewableChangeNotFound:
+        raise HTTPException(status_code=404, detail=f"Reviewable change '{change_id}' not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/projects/{project_id}/reviewable-changes/{change_id}/mark-reviewed",
+    response_model=ReviewableChangeModel,
+)
+def mark_reviewable_change_reviewed(
+    project_id: str,
+    change_id: str,
+    svc: ProjectService = Depends(get_service),
+):
+    try:
+        return svc.mark_reviewable_change_reviewed(project_id, change_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ReviewableChangeNotFound:
+        raise HTTPException(status_code=404, detail=f"Reviewable change '{change_id}' not found")
+
+
+@router.post("/projects/{project_id}/reviewable-changes/{change_id}/revert", response_model=ReviewableChangeModel)
+def revert_reviewable_change(project_id: str, change_id: str, svc: ProjectService = Depends(get_service)):
+    try:
+        return svc.revert_reviewable_change(project_id, change_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ReviewableChangeNotFound:
+        raise HTTPException(status_code=404, detail=f"Reviewable change '{change_id}' not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/projects/{project_id}/mine-all", response_model=Job, status_code=202)
+def mine_all(project_id: str, body: MineAllRequest, svc: ProjectService = Depends(get_service)):
+    try:
+        fn = svc.make_mine_all_job(
+            project_id,
+            mode=body.mode,
+            auto_apply=body.auto_apply,
+            chapters=body.chapters,
+        )
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    job_id = runner.submit("mine-all", fn, meta={"project_id": project_id})
+    return runner.get(job_id)
+
+
 @router.get("/projects/{project_id}/story-graph/nodes", response_model=list[StoryGraphNodeSummary])
 def list_story_graph_nodes(project_id: str, svc: ProjectService = Depends(get_service)):
     try:
@@ -1181,6 +1287,8 @@ def generate_chapter_brief(project_id: str, chapter_number: int, body: GenerateC
             chapter_number,
             source=body.source,
             max_beats=body.max_beats,
+            beat_importance_threshold=body.beat_importance_threshold,
+            current_brief=body.current_brief.model_dump() if body.current_brief else None,
         )
     except ProjectNotFound:
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
@@ -1188,6 +1296,40 @@ def generate_chapter_brief(project_id: str, chapter_number: int, body: GenerateC
         raise HTTPException(status_code=404, detail=f"Chapter {chapter_number} not found")
     except BadRequest as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/projects/{project_id}/chapters/{chapter_number}/brief/generate/async",
+    response_model=Job,
+    status_code=202,
+)
+def generate_chapter_brief_async(
+    project_id: str,
+    chapter_number: int,
+    body: GenerateChapterBriefRequest,
+    svc: ProjectService = Depends(get_service),
+):
+    try:
+        fn = svc.make_chapter_brief_job(
+            project_id,
+            chapter_number,
+            source=body.source,
+            max_beats=body.max_beats,
+            beat_importance_threshold=body.beat_importance_threshold,
+            current_brief=body.current_brief.model_dump() if body.current_brief else None,
+        )
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ChapterNotFound:
+        raise HTTPException(status_code=404, detail=f"Chapter {chapter_number} not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    job_id = runner.submit(
+        "chapter_brief",
+        fn,
+        meta={"project_id": project_id, "chapter": chapter_number},
+    )
+    return runner.get(job_id)
 
 
 @router.post("/projects/{project_id}/chapters/briefs/generate", response_model=GenerateChapterBriefsResult)
@@ -1198,12 +1340,43 @@ def generate_chapter_briefs(project_id: str, body: GenerateChapterBriefsRequest,
             project_id,
             source=body.source,
             max_beats=body.max_beats,
+            beat_importance_threshold=body.beat_importance_threshold,
             overwrite_existing=body.overwrite_existing,
         )
     except ProjectNotFound:
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
     except BadRequest as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/projects/{project_id}/chapters/briefs/generate/async",
+    response_model=Job,
+    status_code=202,
+)
+def generate_chapter_briefs_async(
+    project_id: str,
+    body: GenerateChapterBriefsRequest,
+    svc: ProjectService = Depends(get_service),
+):
+    try:
+        fn = svc.make_chapter_briefs_job(
+            project_id,
+            source=body.source,
+            max_beats=body.max_beats,
+            beat_importance_threshold=body.beat_importance_threshold,
+            overwrite_existing=body.overwrite_existing,
+        )
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    job_id = runner.submit(
+        "chapter_briefs",
+        fn,
+        meta={"project_id": project_id},
+    )
+    return runner.get(job_id)
 
 
 @router.get(
@@ -1239,6 +1412,34 @@ def generate_chapter_titles(
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
     except BadRequest as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/projects/{project_id}/chapters/titles/generate/async",
+    response_model=Job,
+    status_code=202,
+)
+def generate_chapter_titles_async(
+    project_id: str,
+    body: GenerateChapterTitlesRequest,
+    svc: ProjectService = Depends(get_service),
+):
+    try:
+        fn = svc.make_chapter_titles_job(
+            project_id,
+            source=body.source,
+            scope=body.scope,
+        )
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    job_id = runner.submit(
+        "chapter_titles",
+        fn,
+        meta={"project_id": project_id},
+    )
+    return runner.get(job_id)
 
 
 @router.get(
@@ -2373,6 +2574,65 @@ def discard_paragraphs_preview(project_id: str, number: int, svc: ProjectService
     return Response(status_code=204)
 
 
+@router.post("/projects/{project_id}/chapters/{number}/check-dialogue-quotes", response_model=Job, status_code=202)
+def check_dialogue_quotes(project_id: str, number: int, body: RegenerateChapter,
+                          svc: ProjectService = Depends(get_service)):
+    try:
+        fn = svc.make_check_dialogue_quotes_job(project_id, number, source=body.source)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ChapterNotFound:
+        raise HTTPException(status_code=404, detail=f"Chapter {number} not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    job_id = runner.submit("check_dialogue_quotes", fn, meta={"project_id": project_id, "chapter": number})
+    return runner.get(job_id)
+
+
+@router.get("/projects/{project_id}/chapters/{number}/dialogue-quotes/preview",
+            response_model=RegeneratePreview)
+def get_dialogue_quotes_preview(project_id: str, number: int, svc: ProjectService = Depends(get_service)):
+    try:
+        preview = svc.get_dialogue_quotes_preview(project_id, number)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ChapterNotFound:
+        raise HTTPException(status_code=404, detail=f"Chapter {number} not found")
+    if preview is None:
+        raise HTTPException(status_code=404, detail="No dialogue quote preview for this chapter")
+    return preview
+
+
+@router.post("/projects/{project_id}/chapters/{number}/dialogue-quotes/apply",
+             response_model=RegenerateApplyResult)
+def apply_dialogue_quotes_preview(project_id: str, number: int, body: RegenerateApply,
+                                  svc: ProjectService = Depends(get_service)):
+    try:
+        target, wc = svc.apply_dialogue_quotes_preview(
+            project_id, number, body.text, target=body.target,
+        )
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ChapterNotFound:
+        raise HTTPException(status_code=404, detail=f"Chapter {number} not found")
+    except BadRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return RegenerateApplyResult(target=target, word_count=wc)
+
+
+@router.delete("/projects/{project_id}/chapters/{number}/dialogue-quotes/preview", status_code=204)
+def discard_dialogue_quotes_preview(project_id: str, number: int, svc: ProjectService = Depends(get_service)):
+    try:
+        svc.discard_dialogue_quotes_preview(project_id, number)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    except ChapterNotFound:
+        raise HTTPException(status_code=404, detail=f"Chapter {number} not found")
+    return Response(status_code=204)
+
+
 @router.post("/projects/{project_id}/chapters/{number}/align-boundary", response_model=Job, status_code=202)
 def align_chapter_boundary(project_id: str, number: int, body: RegenerateChapter,
                            svc: ProjectService = Depends(get_service)):
@@ -2871,6 +3131,71 @@ def put_agent_prompt_settings(agent_name: str, body: UpdateAgentPromptSetting):
         raise HTTPException(status_code=400, detail=str(e)) from e
     agents = Path(__file__).resolve().parent.parent / "agents"
     return AgentPromptSettings(prompts=agent_prompt_settings(), agents_dir=str(agents))
+
+
+@router.get("/settings/llm-connection", response_model=LlmConnectionSettings)
+def get_llm_connection_settings():
+    if str(_CORE) not in sys.path:
+        sys.path.insert(0, str(_CORE))
+    from app_settings import read_llm_connection_settings  # noqa: WPS433
+
+    return LlmConnectionSettings(**read_llm_connection_settings())
+
+
+@router.put("/settings/llm-connection", response_model=LlmConnectionSettings)
+def put_llm_connection_settings(body: UpdateLlmConnectionSettings):
+    if str(_CORE) not in sys.path:
+        sys.path.insert(0, str(_CORE))
+    from app_settings import write_llm_connection_settings  # noqa: WPS433
+
+    try:
+        return LlmConnectionSettings(**write_llm_connection_settings(body.model_dump()))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/settings/llm-connection/test", response_model=LlmConnectionTestResult)
+def test_llm_connection_settings(body: UpdateLlmConnectionSettings):
+    if str(_CORE) not in sys.path:
+        sys.path.insert(0, str(_CORE))
+    from app_settings import resolve_llm_connection_api_key  # noqa: WPS433
+    from llm_client import LLMClient, LLMError  # noqa: WPS433
+
+    try:
+        api_key = resolve_llm_connection_api_key(body.model_dump())
+        client = LLMClient(
+            provider=body.provider,
+            model=body.model or None,
+            base_url=body.base_url or None,
+            api_key=api_key or None,
+        )
+        return LlmConnectionTestResult(
+            ok=True,
+            message="Connection settings are valid.",
+            provider=client.provider,
+            model=client.model,
+            base_url=client.base_url,
+        )
+    except (LLMError, ValueError) as e:
+        return LlmConnectionTestResult(
+            ok=False,
+            message=str(e),
+            provider=body.provider,
+            model=body.model,
+            base_url=body.base_url,
+        )
+
+
+@router.get("/settings/llm-connection/models", response_model=LlmModelListResult)
+def list_llm_connection_models():
+    if str(_CORE) not in sys.path:
+        sys.path.insert(0, str(_CORE))
+    from llm_client import LLMClient, LLMError  # noqa: WPS433
+
+    try:
+        return LlmModelListResult(models=LLMClient().list_models())
+    except LLMError as e:
+        return LlmModelListResult(models=[], message=str(e))
 
 
 def _llm_queue_settings() -> LlmQueueSettings:

@@ -213,6 +213,7 @@ export default function RelationshipGraphPanel({
       return;
     }
     setSelectedId(id);
+    onSelectCharacter(id);
   }
 
   if (characters.length === 0) {

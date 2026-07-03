@@ -119,6 +119,47 @@ export interface JobStatus {
   status: "running" | "done" | "error"; error: string | null;
   project_id?: string;
 }
+export type ReviewableChangeStatus =
+  | "pending"
+  | "applied_needs_review"
+  | "reviewed"
+  | "dismissed"
+  | "reverted"
+  | "blocked";
+export interface ReviewableChange {
+  id: string;
+  kind: string;
+  title: string;
+  summary?: string | null;
+  reason?: string | null;
+  source: string;
+  status: ReviewableChangeStatus;
+  confidence?: number | null;
+  created_at: string;
+  updated_at: string;
+  target: unknown;
+  before: unknown;
+  after: unknown;
+  conflicts?: string[] | null;
+  revert_available: boolean;
+}
+export type MineAllMode = "missing_outlines" | "missing_briefs" | "everything";
+export interface MineAllRequest {
+  mode: MineAllMode;
+  auto_apply?: boolean;
+  chapters?: number[];
+}
+export interface GenerateGraphSuggestionsResult {
+  changes: ReviewableChange[];
+  generated: number;
+  applied: number;
+}
+export interface MineAllResult {
+  mode: MineAllMode;
+  status: string;
+  message: string;
+  changes: ReviewableChange[];
+}
 export interface JobCancelResult extends JobStatus {
   cancelled_jobs: number;
   batch_id?: string | null;
@@ -135,6 +176,7 @@ export interface RegeneratePreview {
   instructions: string;
   placeholder_count?: number | null;
   scene_break_count?: number | null;
+  quote_mark_count?: number | null;
 }
 export interface SplitChapterPart {
   number: number;
@@ -218,6 +260,12 @@ export interface CharacterSummary {
   id: string; full_name: string; role: string; aliases?: string[];
   portrait_url?: string | null;
 }
+export interface CharacterChapterReference {
+  chapter_number: number;
+  chapter_title: string;
+  present: boolean;
+  mentioned: boolean;
+}
 export interface CharacterDetail extends CharacterSummary {
   age: number | null;
   physical_description: string;
@@ -235,6 +283,7 @@ export interface CharacterDetail extends CharacterSummary {
   aliases: string[];
   last_appearance_chapter: number;
   relationships?: Record<string, string>;
+  chapter_references?: CharacterChapterReference[];
 }
 export interface MentionWarning {
   severity: string;
@@ -694,6 +743,48 @@ export interface AgentPromptSettings {
   agents_dir: string;
 }
 
+export interface LlmProviderOption {
+  key: string;
+  label: string;
+  local: boolean;
+  default_base_url: string;
+  default_model: string;
+  api_key_required: boolean;
+}
+
+export interface LlmProfile {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  base_url: string;
+  api_key_set: boolean;
+}
+
+export interface LlmConnectionSettings {
+  provider: string;
+  model: string;
+  base_url: string;
+  api_key_set: boolean;
+  local_only: boolean;
+  allowed_providers: LlmProviderOption[];
+  active_profile_id: string;
+  profiles: LlmProfile[];
+}
+
+export interface LlmConnectionTestResult {
+  ok: boolean;
+  message: string;
+  provider: string;
+  model: string;
+  base_url: string;
+}
+
+export interface LlmModelListResult {
+  models: string[];
+  message: string;
+}
+
 export interface LlmQueueEntry {
   id: string;
   label: string;
@@ -714,6 +805,19 @@ export interface RunningJobEntry {
   screen?: string;
   batch_id?: string | null;
   batch_size?: number;
+  progress?: JobProgress | null;
+}
+export interface JobProgress {
+  total: number;
+  completed: number;
+  skipped: number;
+  failed: number;
+  current: string;
+  unit: string;
+  average_seconds?: number | null;
+  elapsed_seconds?: number | null;
+  remaining_seconds?: number | null;
+  updated_at?: string | null;
 }
 
 export interface LlmQueueSettings {
@@ -926,6 +1030,16 @@ export const api = {
     ),
   discardParagraphsPreview: (id: string, n: number) =>
     del(`/api/projects/${id}/chapters/${n}/paragraphs/preview`),
+  checkDialogueQuotes: (id: string, n: number, body: { source: string }) =>
+    send<JobStatus>(`/api/projects/${id}/chapters/${n}/check-dialogue-quotes`, "POST", body),
+  getDialogueQuotesPreview: (id: string, n: number) =>
+    getOptional<RegeneratePreview>(`/api/projects/${id}/chapters/${n}/dialogue-quotes/preview`),
+  applyDialogueQuotesPreview: (id: string, n: number, body: { text: string; target?: string }) =>
+    send<{ target: string; word_count: number }>(
+      `/api/projects/${id}/chapters/${n}/dialogue-quotes/apply`, "POST", body,
+    ),
+  discardDialogueQuotesPreview: (id: string, n: number) =>
+    del(`/api/projects/${id}/chapters/${n}/dialogue-quotes/preview`),
   generateOutline: (id: string, n: number, body: { source: string; instructions?: string }) =>
     send<JobStatus>(`/api/projects/${id}/chapters/${n}/generate-outline`, "POST", body),
   getOutlinePreview: (id: string, n: number) =>
@@ -1119,17 +1233,42 @@ export const api = {
     getOptional<ChapterBriefSummary>(`/api/projects/${id}/chapters/${chapterNumber}/brief`),
   saveChapterBrief: (id: string, chapterNumber: number, body: SaveChapterBriefPayload) =>
     send<ChapterBriefSummary>(`/api/projects/${id}/chapters/${chapterNumber}/brief`, "PUT", body),
-  generateChapterBrief: (id: string, chapterNumber: number, body?: { source?: string; max_beats?: number }) =>
+  generateChapterBrief: (id: string, chapterNumber: number, body?: {
+    source?: string;
+    max_beats?: number;
+    beat_importance_threshold?: number;
+    current_brief?: SaveChapterBriefPayload;
+  }) =>
     send<ChapterBriefSummary>(`/api/projects/${id}/chapters/${chapterNumber}/brief/generate`, "POST", body ?? {}),
+  generateChapterBriefAsync: (id: string, chapterNumber: number, body?: {
+    source?: string;
+    max_beats?: number;
+    beat_importance_threshold?: number;
+    current_brief?: SaveChapterBriefPayload;
+  }) =>
+    send<JobStatus>(
+      `/api/projects/${id}/chapters/${chapterNumber}/brief/generate/async`,
+      "POST",
+      body ?? {},
+    ),
   generateChapterBriefs: (id: string, body?: {
     source?: string;
     max_beats?: number;
+    beat_importance_threshold?: number;
     overwrite_existing?: boolean;
   }) => send<GenerateChapterBriefsResult>(`/api/projects/${id}/chapters/briefs/generate`, "POST", body ?? {}),
+  generateChapterBriefsAsync: (id: string, body?: {
+    source?: string;
+    max_beats?: number;
+    beat_importance_threshold?: number;
+    overwrite_existing?: boolean;
+  }) => send<JobStatus>(`/api/projects/${id}/chapters/briefs/generate/async`, "POST", body ?? {}),
   autoTitleChapterStats: (id: string) =>
     get<BatchExtractOutlineStats>(`/api/projects/${id}/batch/auto-title/stats`),
   generateChapterTitles: (id: string, body?: { source?: string; scope?: "eligible" | "auto_only" }) =>
     send<GenerateChapterTitlesResult>(`/api/projects/${id}/chapters/titles/generate`, "POST", body ?? {}),
+  generateChapterTitlesAsync: (id: string, body?: { source?: string; scope?: "eligible" | "auto_only" }) =>
+    send<JobStatus>(`/api/projects/${id}/chapters/titles/generate/async`, "POST", body ?? {}),
   batchExtractOutlinesStats: (id: string, source = "best") =>
     get<BatchExtractOutlineStats>(
       `/api/projects/${id}/batch/extract-outlines/stats?source=${encodeURIComponent(source)}`,
@@ -1150,6 +1289,24 @@ export const api = {
     auto_accept?: boolean;
     chapters?: number[];
   }) => send<JobStatus>(`/api/projects/${id}/batch/extract-codex`, "POST", body ?? {}),
+  reviewableChanges: (id: string) =>
+    get<ReviewableChange[]>(`/api/projects/${id}/reviewable-changes`),
+  generateGraphSuggestions: (id: string, body?: { auto_apply?: boolean }) =>
+    send<GenerateGraphSuggestionsResult | JobStatus>(
+      `/api/projects/${id}/reviewable-changes/generate-graph-suggestions`,
+      "POST",
+      body ?? {},
+    ),
+  applyReviewableChange: (id: string, changeId: string) =>
+    send<ReviewableChange>(`/api/projects/${id}/reviewable-changes/${changeId}/apply`, "POST"),
+  dismissReviewableChange: (id: string, changeId: string) =>
+    send<ReviewableChange>(`/api/projects/${id}/reviewable-changes/${changeId}/dismiss`, "POST"),
+  markReviewableChangeReviewed: (id: string, changeId: string) =>
+    send<ReviewableChange>(`/api/projects/${id}/reviewable-changes/${changeId}/mark-reviewed`, "POST"),
+  revertReviewableChange: (id: string, changeId: string) =>
+    send<ReviewableChange>(`/api/projects/${id}/reviewable-changes/${changeId}/revert`, "POST"),
+  mineAll: (id: string, body: MineAllRequest) =>
+    send<MineAllResult | JobStatus>(`/api/projects/${id}/mine-all`, "POST", body),
   deleteChapterBrief: (id: string, chapterNumber: number) =>
     del(`/api/projects/${id}/chapters/${chapterNumber}/brief`),
   getChapterContextPreview: (
@@ -1350,6 +1507,20 @@ export const api = {
     agent: string,
     body: { selected_variant: AgentPromptVariant; custom_prompt: string },
   ) => send<AgentPromptSettings>(`/api/settings/agent-prompts/${agent}`, "PUT", body),
+  llmConnectionSettings: () => get<LlmConnectionSettings>("/api/settings/llm-connection"),
+  saveLlmConnectionSettings: (body: {
+    provider: string;
+    model: string;
+    base_url: string;
+    api_key?: string | null;
+    profile_id?: string | null;
+    profile_name?: string;
+    save_profile?: boolean;
+  }) =>
+    send<LlmConnectionSettings>("/api/settings/llm-connection", "PUT", body),
+  testLlmConnectionSettings: (body: { provider: string; model: string; base_url: string; api_key?: string | null }) =>
+    send<LlmConnectionTestResult>("/api/settings/llm-connection/test", "POST", body),
+  listLlmModels: () => get<LlmModelListResult>("/api/settings/llm-connection/models"),
   llmQueueSettings: () => get<LlmQueueSettings>("/api/settings/llm-queue"),
   saveLlmQueueSettings: (max_concurrent: number) =>
     send<LlmQueueSettings>("/api/settings/llm-queue", "PUT", { max_concurrent }),

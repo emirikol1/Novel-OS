@@ -194,15 +194,23 @@ def eligible_graph_nodes(state: "StoryState", chapter_number: int) -> List[Story
 
 
 def normalize_brief_characters(brief: ChapterBrief) -> None:
-    """Ensure active_character_ids is a subset of mentioned_character_ids."""
-    mentioned = list(brief.mentioned_character_ids or [])
-    seen = {cid for cid in mentioned if (cid or "").strip()}
-    brief.mentioned_character_ids = [cid for cid in mentioned if (cid or "").strip()]
+    """Keep active and mentioned character lists as exclusive chapter states."""
+    active: List[str] = []
+    active_seen: set[str] = set()
     for cid in brief.active_character_ids or []:
         cid = (cid or "").strip()
-        if cid and cid not in seen:
-            brief.mentioned_character_ids.append(cid)
-            seen.add(cid)
+        if cid and cid not in active_seen:
+            active.append(cid)
+            active_seen.add(cid)
+    mentioned: List[str] = []
+    mentioned_seen: set[str] = set()
+    for cid in brief.mentioned_character_ids or []:
+        cid = (cid or "").strip()
+        if cid and cid not in active_seen and cid not in mentioned_seen:
+            mentioned.append(cid)
+            mentioned_seen.add(cid)
+    brief.active_character_ids = active
+    brief.mentioned_character_ids = mentioned
 
 
 def validate_brief_active_nodes(
@@ -460,8 +468,6 @@ def format_chapter_brief_prompt_context(
         sections.append(style_block)
 
     mentioned_ids = list(brief.mentioned_character_ids or [])
-    if not mentioned_ids and brief.active_character_ids:
-        mentioned_ids = list(brief.active_character_ids)
     mentioned_lines: List[str] = []
     for cid in mentioned_ids:
         cid = (cid or "").strip()

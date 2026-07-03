@@ -20,9 +20,9 @@ import {
   hasChapterPreviewPending,
   setChapterPreviewPending,
 } from "../lib/chapterPreviewPending";
+import { syncChapterPreviewPendingFromApi } from "../lib/syncChapterPreviewPending";
 import {
   EMPTY_BRIEF_DRAFT,
-  briefFromGeneratedSummary,
   briefFromSummary,
   briefHasContent,
   briefToPayload,
@@ -305,7 +305,8 @@ function LandedBeatCandidatesModal({
       const preview = await api.getChapterBeatCandidatesPreview(projectId, chapterNumber);
       setResult(preview);
       setSelected(new Set((preview?.candidates ?? []).map((_, index) => index)));
-      setChapterPreviewPending(projectId, chapterNumber, Boolean(preview));
+      if (preview) setChapterPreviewPending(projectId, chapterNumber, true);
+      else void syncChapterPreviewPendingFromApi(projectId, chapterNumber);
       if (preview && preview.candidates.length === 0) {
         toast("No landed beat candidates found in chapter text", "info");
       }
@@ -319,7 +320,7 @@ function LandedBeatCandidatesModal({
   async function generateAgain() {
     setResult(null);
     setSelected(new Set());
-    setChapterPreviewPending(projectId, chapterNumber, false);
+    void syncChapterPreviewPendingFromApi(projectId, chapterNumber);
     await onGenerateAgain();
   }
 
@@ -339,7 +340,7 @@ function LandedBeatCandidatesModal({
     }
     try {
       await api.discardChapterBeatCandidatesPreview(projectId, chapterNumber);
-      setChapterPreviewPending(projectId, chapterNumber, false);
+      void syncChapterPreviewPendingFromApi(projectId, chapterNumber);
       setResult(null);
       onClose();
     } catch (e) {
@@ -362,7 +363,7 @@ function LandedBeatCandidatesModal({
         selected_beats: beats,
         mode: "append",
       });
-      setChapterPreviewPending(projectId, chapterNumber, false);
+      void syncChapterPreviewPendingFromApi(projectId, chapterNumber);
       onApplied();
       toast(`Applied ${beats.length} landed beat(s) to beat board`, "success");
       onClose();
@@ -586,6 +587,7 @@ export default function ChapterBriefPanel({
   const [contextPreviewOpen, setContextPreviewOpen] = useState(false);
   const { watchBackgroundJob, isProjectJobRunning } = useBackgroundJob();
   const beatScope = String(chapterNumber);
+  const briefGenerationRunning = isProjectJobRunning("chapter-brief", projectId, beatScope);
   const beatExtractionRunning = isProjectJobRunning("landed-beats", projectId, beatScope);
   const beatCandidatesPending = hasChapterPreviewPending(projectId, chapterNumber);
 
@@ -711,21 +713,31 @@ export default function ChapterBriefPanel({
     if (dirty || briefHasContent(draft)) {
       const ok = await confirm({
         title: "Generate chapter brief?",
-        message: "Replace the current unsaved brief form with a generated suggestion? You can review it before saving.",
-        confirmLabel: "Generate suggestion",
+        message: "Generate and save a chapter brief from the current chapter text? This will replace the current brief fields and refresh the beat board.",
+        confirmLabel: "Generate brief",
       });
       if (!ok) return;
     }
     setBusy(true);
     try {
-      const generated = await api.generateChapterBrief(projectId, chapterNumber, {
+      const job = await api.generateChapterBriefAsync(projectId, chapterNumber, {
         source: "best",
-        max_beats: 5,
+        ...(dirty ? { current_brief: briefToPayload(draft) } : {}),
       });
-      setDraft((prev) => draftWithProjectDefaults(briefFromGeneratedSummary(generated, prev), projectStyle));
-      setBeatBoardRefresh((n) => n + 1);
+      watchBackgroundJob(job.job_id, {
+        label: "Chapter brief",
+        kind: "chapter-brief",
+        projectId,
+        scope: beatScope,
+        successMessage: `Chapter ${chapterNumber} brief generated`,
+        onSuccess: () => {
+          loadBrief();
+          setBeatBoardRefresh((n) => n + 1);
+          setCollapsed(false);
+        },
+      });
       setCollapsed(false);
-      toast("Generated a draft chapter brief — review and save it when ready", "success");
+      toast("Generating chapter brief in the background", "success");
     } catch (e) {
       toast(String(e), "error");
     } finally {
@@ -740,7 +752,7 @@ export default function ChapterBriefPanel({
 
   async function startBeatExtraction() {
     try {
-      setChapterPreviewPending(projectId, chapterNumber, false);
+      void syncChapterPreviewPendingFromApi(projectId, chapterNumber);
       const job = await api.generateChapterBeatCandidatesAsync(projectId, chapterNumber, {
         source: "best",
         count: 10,
@@ -1025,10 +1037,10 @@ export default function ChapterBriefPanel({
               <button
                 type="button"
                 onClick={() => void generateBrief()}
-                disabled={busy}
+                disabled={busy || briefGenerationRunning}
                 className="rounded-lg border border-amber/40 bg-amber/5 px-4 py-2 text-[13px] font-semibold text-ink-text hover:bg-amber/10 disabled:opacity-40"
               >
-                Generate brief
+                {briefGenerationRunning ? "Generating brief…" : "Generate brief"}
               </button>
             </ToolTip>
             <ToolTip id="chapter.landedBeats">

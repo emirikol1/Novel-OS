@@ -3,7 +3,9 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 from dataclasses import asdict
@@ -38,6 +40,7 @@ from .models import (
     BatchExtractOutlineStats,
     PlanOutlinePreview,
     SplitChapterResult,
+    ReviewableChangeModel, GenerateGraphSuggestionsResult, MineAllResult,
 )
 from . import map_assets
 from . import portrait_assets
@@ -63,6 +66,15 @@ from story_graph import (  # noqa: E402
     sync_brief_active_from_pin,
     sync_chapter_pins_for_brief,
     validate_brief_active_nodes,
+)
+from reviewable_changes import (  # noqa: E402
+    ReviewableChange,
+    ReviewableChangeActionError,
+    apply_reviewable_change,
+    dismiss_reviewable_change,
+    generate_graph_reviewable_changes,
+    mark_reviewable_change_reviewed,
+    revert_reviewable_change,
 )
 
 
@@ -111,6 +123,10 @@ class ChapterBriefNotFound(Exception):
 
 
 class ChapterBeatNotFound(Exception):
+    pass
+
+
+class ReviewableChangeNotFound(Exception):
     pass
 
 
@@ -261,6 +277,7 @@ class ProjectService:
                 "tense": s.style_profile.tense,
                 "vocabulary_level": s.style_profile.vocabulary_level,
                 "description": s.style_profile.description,
+                "paragraph_format": s.style_profile.paragraph_format,
                 "chapter_target_words": str(s.style_profile.chapter_target_words),
             },
             project_path=str(proj),
@@ -429,8 +446,10 @@ class ProjectService:
             "prose_style",
             "vocabulary_level",
             "description",
+            "paragraph_format",
             "chapter_target_words",
         }
+        paragraph_formats = {"block", "indented"}
         for key, value in updates.items():
             if key in allowed and value is not None:
                 if key == "chapter_target_words":
@@ -438,6 +457,11 @@ class ProjectService:
                         setattr(s.style_profile, key, max(1, int(str(value).strip())))
                     except (TypeError, ValueError):
                         raise BadRequest("chapter_target_words must be a positive integer") from None
+                elif key == "paragraph_format":
+                    fmt = str(value).strip() or "block"
+                    if fmt not in paragraph_formats:
+                        raise BadRequest("paragraph_format must be 'block' or 'indented'")
+                    setattr(s.style_profile, key, fmt)
                 else:
                     setattr(s.style_profile, key, str(value).strip())
         s.save_state()
@@ -1093,17 +1117,39 @@ class ProjectService:
             raise BadRequest("No chapters with Final text to export.")
         title = s.metadata.get("title", project_id)
         author = s.metadata.get("author", "Unknown")
-        data = build_epub(title, author, chapters_data)
+        paragraph_format = getattr(s.style_profile, "paragraph_format", "block") or "block"
+        data = build_epub(title, author, chapters_data, paragraph_format=paragraph_format)
         return f"{project_id}.epub", data
 
     # ----- Manual edit: chapters, characters, plots, story bible
 
+    @staticmethod
+    def _character_chapter_references(s: StoryState, character_id: str) -> list[dict]:
+        refs: list[dict] = []
+        for chapter_number, brief in sorted(s.chapter_briefs.items()):
+            active_ids = set(brief.active_character_ids or [])
+            mentioned_ids = set(brief.mentioned_character_ids or [])
+            present = character_id in active_ids or character_id == (brief.pov_character_id or "")
+            mentioned = character_id in mentioned_ids and not present
+            if not present and not mentioned:
+                continue
+            chapter = s.get_chapter(chapter_number)
+            refs.append({
+                "chapter_number": chapter_number,
+                "chapter_title": (chapter.title if chapter else "") or "",
+                "present": present,
+                "mentioned": mentioned,
+            })
+        return refs
+
     def _character_detail(self, project_id: str, char: Character) -> CharacterDetail:
+        s = self._load(project_id)
         data = {k: v for k, v in char.to_dict().items() if k != "portrait_filename"}
         data["portrait_url"] = (
             self._character_portrait_url(project_id, char.id)
             if char.portrait_filename else None
         )
+        data["chapter_references"] = self._character_chapter_references(s, char.id)
         return CharacterDetail(**data)
 
     def get_character(self, project_id: str, character_id: str) -> CharacterDetail:
@@ -3038,6 +3084,94 @@ class ProjectService:
             if path.exists():
                 path.unlink()
 
+    def get_dialogue_quotes_preview(self, project_id: str, number: int) -> dict | None:
+        self.ensure_chapter(project_id, number)
+        fmt = self._paragraph_formatter(project_id)
+        preview_path = fmt.dialogue_quotes_preview_path(number)
+        if not preview_path.exists():
+            return None
+        meta: dict = {}
+        meta_path = fmt.dialogue_quotes_meta_path(number)
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return {
+            "text": preview_path.read_text(encoding="utf-8"),
+            "source": meta.get("source", "draft"),
+            "original_word_count": meta.get("original_word_count", 0),
+            "preview_word_count": meta.get("preview_word_count", 0),
+            "generated_at": meta.get("generated_at"),
+            "instructions": "",
+            "quote_mark_count": meta.get("quote_mark_count"),
+        }
+
+    def make_check_dialogue_quotes_job(
+        self,
+        project_id: str,
+        number: int,
+        *,
+        source: str = "draft",
+    ) -> Callable[[], None]:
+        self.ensure_chapter(project_id, number)
+        fmt = self._paragraph_formatter(project_id)
+        text = fmt.read_source(number, source)
+        if not text.strip():
+            raise BadRequest(f"No {source} text found for this chapter.")
+        proj_path = str(self._project_dir(project_id))
+
+        def fn() -> None:
+            from chapter_paragraph_formatter import ChapterParagraphFormatter  # noqa: E402
+            ChapterParagraphFormatter(proj_path).check_dialogue_quotes(
+                number,
+                source=source,
+                on_progress=_operational_log,
+            )
+            try:
+                db.ingest_project(self.root, project_id)
+            except Exception:  # noqa: BLE001
+                pass
+
+        return fn
+
+    def apply_dialogue_quotes_preview(
+        self,
+        project_id: str,
+        number: int,
+        text: str,
+        target: str | None = None,
+    ) -> tuple[str, int]:
+        self.ensure_chapter(project_id, number)
+        if not text.strip():
+            raise BadRequest("Preview text is empty.")
+        fmt = self._paragraph_formatter(project_id)
+        if not fmt.dialogue_quotes_preview_path(number).exists():
+            raise BadRequest("No dialogue quote preview to apply.")
+        from chapter_paragraph_formatter import validate_dialogue_quotes_only  # noqa: E402
+
+        meta_path = fmt.dialogue_quotes_meta_path(number)
+        meta: dict = {}
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        stage = (target or meta.get("source") or "draft").lower()
+        if stage not in ("draft", "revised", "final"):
+            raise BadRequest("target must be draft, revised, or final")
+        original = fmt.read_source(number, stage)
+        validate_dialogue_quotes_only(original, text)
+        if stage == "draft":
+            wc = self.save_draft(project_id, number, text)
+        elif stage == "final":
+            wc = self.save_final(project_id, number, text)
+        else:
+            wc = self.save_revised(project_id, number, text)
+        self.discard_dialogue_quotes_preview(project_id, number)
+        return stage, wc
+
+    def discard_dialogue_quotes_preview(self, project_id: str, number: int) -> None:
+        self.ensure_chapter(project_id, number)
+        fmt = self._paragraph_formatter(project_id)
+        for path in (fmt.dialogue_quotes_preview_path(number), fmt.dialogue_quotes_meta_path(number)):
+            if path.exists():
+                path.unlink()
+
     # ----- Chapter boundary alignment (preview → keep / discard)
 
     def _boundary_aligner(self, project_id: str):
@@ -4021,6 +4155,218 @@ class ProjectService:
         s.delete_plot_thread(thread_id)
         s.save_state()
 
+    # ----- Reviewable changes
+
+    @staticmethod
+    def _reviewable_change_model(change: ReviewableChange) -> ReviewableChangeModel:
+        return ReviewableChangeModel(**change.to_dict())
+
+    def list_reviewable_changes(
+        self,
+        project_id: str,
+        *,
+        status: str | None = None,
+        kind: str | None = None,
+        source: str | None = None,
+    ) -> list[ReviewableChangeModel]:
+        s = self._load(project_id)
+        changes = list(s.reviewable_changes.values())
+        if status:
+            changes = [c for c in changes if c.status == status]
+        if kind:
+            changes = [c for c in changes if c.kind == kind]
+        if source:
+            changes = [c for c in changes if c.source == source]
+        changes.sort(key=lambda c: (c.created_at, c.id))
+        return [self._reviewable_change_model(c) for c in changes]
+
+    def generate_graph_suggestions(
+        self,
+        project_id: str,
+        *,
+        auto_apply: bool = False,
+    ) -> GenerateGraphSuggestionsResult:
+        s = self._load(project_id)
+        changes = generate_graph_reviewable_changes(s)
+        applied = 0
+        if auto_apply:
+            for change in changes:
+                before_status = change.status
+                apply_reviewable_change(s, change)
+                if before_status != "applied_needs_review" and change.status == "applied_needs_review":
+                    applied += 1
+        if changes:
+            s.save_state()
+        return GenerateGraphSuggestionsResult(
+            changes=[self._reviewable_change_model(c) for c in changes],
+            generated=len(changes),
+            applied=applied,
+        )
+
+    def _get_reviewable_change(self, state: StoryState, change_id: str) -> ReviewableChange:
+        change = state.reviewable_changes.get(change_id)
+        if change is None:
+            raise ReviewableChangeNotFound(change_id)
+        return change
+
+    def apply_reviewable_change(self, project_id: str, change_id: str) -> ReviewableChangeModel:
+        s = self._load(project_id)
+        change = self._get_reviewable_change(s, change_id)
+        try:
+            apply_reviewable_change(s, change)
+        except ReviewableChangeActionError as e:
+            raise BadRequest(str(e)) from e
+        s.save_state()
+        return self._reviewable_change_model(change)
+
+    def dismiss_reviewable_change(self, project_id: str, change_id: str) -> ReviewableChangeModel:
+        s = self._load(project_id)
+        change = self._get_reviewable_change(s, change_id)
+        try:
+            dismiss_reviewable_change(change)
+        except ReviewableChangeActionError as e:
+            raise BadRequest(str(e)) from e
+        s.save_state()
+        return self._reviewable_change_model(change)
+
+    def mark_reviewable_change_reviewed(self, project_id: str, change_id: str) -> ReviewableChangeModel:
+        s = self._load(project_id)
+        change = self._get_reviewable_change(s, change_id)
+        mark_reviewable_change_reviewed(change)
+        s.save_state()
+        return self._reviewable_change_model(change)
+
+    def revert_reviewable_change(self, project_id: str, change_id: str) -> ReviewableChangeModel:
+        s = self._load(project_id)
+        change = self._get_reviewable_change(s, change_id)
+        try:
+            revert_reviewable_change(s, change)
+        except ReviewableChangeActionError as e:
+            raise BadRequest(str(e)) from e
+        s.save_state()
+        return self._reviewable_change_model(change)
+
+    def mine_all(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        auto_apply: bool = False,
+        chapters: list[int] | None = None,
+    ) -> MineAllResult:
+        mode_key = (mode or "").strip()
+        if mode_key not in {"missing_outlines", "missing_briefs", "everything"}:
+            raise BadRequest("mode must be missing_outlines, missing_briefs, or everything")
+        if chapters is not None and any(int(n) < 1 for n in chapters):
+            raise BadRequest("chapters must contain positive chapter numbers")
+        # First backend slice: graph suggestions are wired now; prose/brief mining remains job-scoped.
+        result = self.generate_graph_suggestions(project_id, auto_apply=auto_apply)
+        chapter_scope = "all chapters" if not chapters else f"{len(chapters)} chapter(s)"
+        return MineAllResult(
+            mode=mode_key,
+            status="scaffolded",
+            message=(
+                "Graph suggestions generated synchronously; outline and brief mining "
+                f"for {chapter_scope} is not yet orchestrated by this endpoint."
+            ),
+            changes=result.changes,
+        )
+
+    def make_mine_all_job(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        auto_apply: bool = False,
+        chapters: list[int] | None = None,
+    ) -> Callable[[], None]:
+        """Build a project-level mining job from existing preview/apply-safe phases."""
+        from batch_extract import BATCH_SOURCES, batch_extract_codex, batch_extract_outlines  # noqa: WPS433
+        from job_control import check_job_cancelled  # noqa: WPS433
+        from job_progress import RollingJobProgress  # noqa: WPS433
+
+        self._project_dir(project_id)
+        mode_key = (mode or "").strip()
+        if mode_key not in {"missing_outlines", "missing_briefs", "everything"}:
+            raise BadRequest("mode must be missing_outlines, missing_briefs, or everything")
+        if "best" not in BATCH_SOURCES:
+            raise BadRequest("best source unavailable")
+        if chapters:
+            for number in chapters:
+                self.ensure_chapter(project_id, number)
+        if chapters is not None and any(int(n) < 1 for n in chapters):
+            raise BadRequest("chapters must contain positive chapter numbers")
+
+        project_path = str(self._project_dir(project_id))
+        skip_existing = mode_key != "everything"
+        phase_total = 1 if mode_key == "missing_outlines" else 5
+
+        def fn() -> None:
+            progress = RollingJobProgress(total=phase_total, unit="phase")
+
+            progress.start("Extracting chapter outlines")
+            batch_extract_outlines(
+                project_path,
+                source="best",
+                skip_existing=skip_existing,
+                auto_accept=auto_apply,
+                chapters=chapters,
+                on_progress=_operational_log,
+            )
+            progress.complete("Outline extraction finished")
+            check_job_cancelled()
+
+            if mode_key == "missing_outlines":
+                try:
+                    db.ingest_project(self.root, project_id)
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+
+            progress.start("Mining characters, plots, and bible")
+            batch_extract_codex(
+                project_path,
+                source="best",
+                skip_existing=skip_existing,
+                auto_accept=auto_apply,
+                chapters=chapters,
+                on_progress=_operational_log,
+            )
+            progress.complete("Codex mining finished")
+            check_job_cancelled()
+
+            progress.start("Generating graph suggestions")
+            self.generate_graph_suggestions(project_id, auto_apply=auto_apply)
+            progress.complete("Graph suggestions generated")
+            check_job_cancelled()
+
+            if auto_apply:
+                progress.start("Generating chapter briefs")
+                self.generate_chapter_briefs(
+                    project_id,
+                    source="best",
+                    overwrite_existing=mode_key == "everything",
+                    use_ai=True,
+                )
+                progress.complete("Chapter briefs generated")
+                check_job_cancelled()
+            else:
+                progress.start("Skipping direct chapter brief writes")
+                _operational_log(
+                    "Mine All skipped chapter brief generation because review mode "
+                    "requires a reviewable brief wrapper before writing briefs.",
+                )
+                progress.skip("Chapter brief generation queued for future reviewable wrapper")
+
+            progress.start("Refreshing project index")
+            try:
+                db.ingest_project(self.root, project_id)
+            except Exception:  # noqa: BLE001
+                pass
+            progress.complete("Mine All complete")
+
+        return fn
+
     # ----- Story graph / chapter briefs
 
     def _story_graph_node_summary(self, node: StoryGraphNode) -> StoryGraphNodeSummary:
@@ -4623,8 +4969,6 @@ class ProjectService:
             if (cid or "").strip()
         ]
         mentioned_ids = list(brief.mentioned_character_ids or [])
-        if not mentioned_ids:
-            mentioned_ids = list(brief.active_character_ids or [])
         mentioned_chars = [
             ContextPreviewCharacter(
                 id=cid,
@@ -4655,35 +4999,34 @@ class ProjectService:
             beats=beat_preview,
         )
 
-    def generate_chapter_brief(
+    def _generate_chapter_brief_from_materials(
         self,
-        project_id: str,
-        chapter_number: int,
+        s: StoryState,
+        chapter: ChapterState,
         *,
-        source: str = "best",
-        max_beats: int = 5,
+        outline: str,
+        body_text: str,
+        source_label: str,
+        max_beats: int | None,
+        beat_importance_threshold: int = 4,
+        current_brief: ChapterBrief | None = None,
+        require_scored_beats: bool = False,
     ) -> ChapterBriefSummary:
+        chapter_number = chapter.number
         from chapter_brief_utils import (  # noqa: WPS433
             infer_cast_from_text,
             merge_cast_ids,
-            merge_planned_beats,
             migrate_legacy_brief_beats_to_chapter_beats,
+            replace_planned_beats,
         )
 
-        s = self._load(project_id)
-        chapter = s.chapters.get(chapter_number)
-        if chapter is None:
-            raise ChapterNotFound(chapter_number)
-        if max_beats < 1 or max_beats > 12:
-            raise BadRequest("max_beats must be between 1 and 12")
-        found = self._timeline_text_for_generation(project_id, chapter_number, source)
-        outline = _read(self._stage_paths(project_id, chapter_number)["outline"]) or ""
-        body_text = found[1] if found else ""
         combined = f"{outline}\n\n{body_text}".strip()
         if not combined:
             raise BadRequest("No outline, final, revised, or draft text found for this chapter.")
 
-        existing_brief = s.get_chapter_brief(chapter_number)
+        saved_brief = s.get_chapter_brief(chapter_number)
+        existing_brief = current_brief if current_brief is not None else saved_brief
+        prefer_current_brief = current_brief is not None
         explicit_pov_name = self._brief_pov_character_name_from_text(combined)
         if explicit_pov_name and not (existing_brief and (existing_brief.pov_character_id or "").strip()):
             self._ensure_brief_pov_character(s, explicit_pov_name, chapter_number)
@@ -4692,6 +5035,18 @@ class ProjectService:
             pov_name = character_display_name(s, existing_brief.pov_character_id)
 
         mentioned_ids, active_ids = infer_cast_from_text(s, combined, pov_name)
+        ai_active_ids = self._brief_character_ids_from_section(
+            s,
+            combined,
+            {"characters present", "characters_present", "present characters", "active characters"},
+        )
+        ai_mentioned_ids = self._brief_character_ids_from_section(
+            s,
+            combined,
+            {"characters mentioned", "characters_mentioned", "mentioned characters"},
+        )
+        active_ids = merge_cast_ids(active_ids, ai_active_ids)
+        mentioned_ids = merge_cast_ids(mentioned_ids, ai_mentioned_ids)
         pov_id = ""
         if existing_brief and (existing_brief.pov_character_id or "").strip():
             pov_id = existing_brief.pov_character_id
@@ -4704,8 +5059,8 @@ class ProjectService:
                     break
         if not pov_id and active_ids:
             pov_id = active_ids[0]
-        if pov_id and pov_id not in mentioned_ids:
-            mentioned_ids.append(pov_id)
+        if pov_id and pov_id not in active_ids:
+            active_ids.append(pov_id)
         if pov_id and pov_id not in active_ids and body_text:
             char = s.characters.get(pov_id)
             if char:
@@ -4714,14 +5069,14 @@ class ProjectService:
                 if _detect_explicit_presence(char.full_name, combined, pov_name):
                     active_ids.append(pov_id)
 
-        if existing_brief:
-            mentioned_ids = merge_cast_ids(existing_brief.mentioned_character_ids, mentioned_ids)
-            active_ids = merge_cast_ids(existing_brief.active_character_ids, active_ids)
-            for cid in active_ids:
-                if cid not in mentioned_ids:
-                    mentioned_ids.append(cid)
+        active_ids, mentioned_ids = self._dedupe_brief_cast_ids(s, active_ids, mentioned_ids)
 
-        beat_strings = self._brief_beats_from_text(outline or body_text, max_beats=max_beats)
+        beat_strings = self._brief_beats_from_text(
+            outline or body_text,
+            max_beats=max_beats,
+            beat_importance_threshold=beat_importance_threshold,
+            require_scored_beats=require_scored_beats,
+        )
         active_nodes = self._brief_graph_nodes_for_text(
             s,
             combined,
@@ -4730,23 +5085,30 @@ class ProjectService:
             chapter_number=chapter_number,
         )
         ending_hook = self._brief_ending_hook(outline) or self._brief_ending_hook(body_text)
-        source_label = found[0] if found else "outline"
         notes = self._brief_continuity_notes(chapter, source_label, active_nodes, s)
         source_notes = self._brief_continuity_notes_from_text(combined)
         if source_notes:
             notes = f"{source_notes} {notes}".strip()
-        style_fields = self._brief_style_fields_for_generation(s, existing_brief, combined)
+        style_fields = self._brief_style_fields_for_generation(
+            s,
+            existing_brief,
+            combined,
+            fingerprint_text=body_text or outline,
+            prefer_brief=prefer_current_brief,
+        )
         target_word_count = self._brief_target_word_count_for_generation(
             s,
             chapter,
             existing_brief,
             combined,
+            source_word_count=len(body_text.split()),
+            prefer_brief=prefer_current_brief,
         )
 
-        if existing_brief:
-            migrate_legacy_brief_beats_to_chapter_beats(s, chapter_number, existing_brief)
+        if saved_brief:
+            migrate_legacy_brief_beats_to_chapter_beats(s, chapter_number, saved_brief)
 
-        merged_beats = merge_planned_beats(s, chapter_number, beat_strings)
+        merged_beats = replace_planned_beats(s, chapter_number, beat_strings)
         s.set_chapter_beats(chapter_number, merged_beats)
         s.save_state()
 
@@ -4762,32 +5124,364 @@ class ProjectService:
             **style_fields,
         )
 
+    def generate_chapter_brief(
+        self,
+        project_id: str,
+        chapter_number: int,
+        *,
+        source: str = "best",
+        max_beats: int | None = None,
+        beat_importance_threshold: int | None = 4,
+        current_brief: dict | None = None,
+    ) -> ChapterBriefSummary:
+        s = self._load(project_id)
+        chapter = s.chapters.get(chapter_number)
+        if chapter is None:
+            raise ChapterNotFound(chapter_number)
+        max_beats = self._normalize_brief_max_beats(max_beats)
+        beat_importance_threshold = self._normalize_brief_importance_threshold(
+            beat_importance_threshold,
+        )
+        found = self._timeline_text_for_generation(project_id, chapter_number, source)
+        outline = _read(self._stage_paths(project_id, chapter_number)["outline"]) or ""
+        body_text = found[1] if found else ""
+        source_label = found[0] if found else "outline"
+        current = (
+            self._chapter_brief_from_current_fields(chapter_number, current_brief)
+            if current_brief is not None
+            else None
+        )
+        return self._generate_chapter_brief_from_materials(
+            s,
+            chapter,
+            outline=outline,
+            body_text=body_text,
+            source_label=source_label,
+            max_beats=max_beats,
+            beat_importance_threshold=beat_importance_threshold,
+            current_brief=current,
+        )
+
+    @staticmethod
+    def _ai_chapter_brief_prompt(
+        chapter_number: int,
+        *,
+        title: str,
+        source_label: str,
+        source_text: str,
+        existing_outline: str,
+        max_beats: int | None,
+        beat_importance_threshold: int = 4,
+    ) -> str:
+        outline_block = ""
+        if existing_outline.strip():
+            outline_block = f"""
+## Existing outline or notes (context only)
+
+```markdown
+{existing_outline.strip()}
+```
+"""
+        beat_limit_instruction = (
+            f"After applying the importance threshold, list at most {max_beats} beats. "
+            "`max_beats`/count is a cap, not a target; do not add lower-importance beats to reach it."
+            if max_beats
+            else "List every beat that meets the importance threshold; do not pad to a target count or stop at an arbitrary count."
+        )
+        return f"""# CHAPTER BRIEF GENERATION — Chapter {chapter_number}
+
+You are the **Archivist**. Read the chapter text below and produce an author-facing
+chapter brief that captures what actually happens and what should guide later planning.
+
+- **Chapter title:** {title or "Untitled"}
+- **Source stage:** {source_label}
+- **Word count:** {len(source_text.split())}
+
+Rules:
+- Use only facts supported by the supplied chapter material.
+- Generate from prose even when there is no saved outline.
+- `Characters_Present` means directly on-page: POV, speaking, acting, reacting,
+  moving, addressed, or actively participating.
+- `Characters_Mentioned` means referenced while absent. Do not put the same
+  character in both fields; present takes precedence.
+- Beats are chapter-local planned/summary beats for the beat board, not Story Bible canon.
+- Score each candidate beat on a 0-5 integer importance scale and include only beats with
+  importance score >= {beat_importance_threshold}.
+- Importance scale: 5 = chapter-defining turn, transformation, reveal, irreversible
+  decision, or main obstacle shift; 4 = consequential scene-level beat that changes a
+  goal, access, danger, relationship, or next action; 3 = meaningful local action or
+  characterization but not required later; 2 = texture, mood, repeated attempt, or minor
+  observation; 1 = incidental; 0 = not a beat.
+- Include only consequential beats: turning points, decisions, discoveries/reveals,
+  conflicts, relationship/status changes, setup/payoff moments, and irreversible actions.
+- Skip travel, blocking, atmosphere, repeated micro-actions, metadata, and style notes unless
+  they change story state.
+- If a request provides a limit, `max_beats`/count is a cap, not a target.
+- Use scored beat lines in this format: `1. 5 | Alice makes the irreversible choice.`
+- Keep continuity notes brief and useful for later chapters.
+- `Style Notes` must be a reusable prose style fingerprint for drafting another chapter in
+  the same voice. Describe sentence cadence, paragraph density, diction/register, imagery,
+  dialogue vs. interiority balance, punctuation/rhythm, and POV distance. Do not summarize
+  plot, copy distinctive phrases, or include story facts.
+
+{outline_block}
+## Chapter material ({source_label})
+
+```markdown
+{source_text}
+```
+
+## Output contract
+
+Return exactly one `[CHAPTER_BRIEF]` block. Do not add a preface, explanation,
+Markdown fence, or commentary outside the block. The `## Beats` section is mandatory;
+if no beat meets the threshold, write no beat lines under that heading.
+
+```
+[CHAPTER_BRIEF]
+POV Character: <full name or blank>
+POV Mode: <first person | third limited | third omniscient | multiple | blank>
+Tone: <short tone>
+Tense: <past | present | blank>
+Prose Style: <short style>
+Vocabulary Level: <simple | moderate | elevated | blank>
+Style Notes: <prose style fingerprint for reproducing this chapter's voice>
+Target Word Count: <number or blank>
+Characters_Present:
+- <full name>
+Characters_Mentioned:
+- <full name>
+## Beats
+1. <importance score 0-5> | <beat summary>
+2. ...
+## Continuity Notes
+- <note>
+## Ending Hook
+<how the chapter ends>
+[/CHAPTER_BRIEF]
+```
+
+{beat_limit_instruction} Every beat line must match `N. S | summary`, where `S`
+is an integer importance score from 0 to 5.
+"""
+
+    def generate_chapter_brief_ai(
+        self,
+        project_id: str,
+        chapter_number: int,
+        *,
+        source: str = "best",
+        max_beats: int | None = None,
+        beat_importance_threshold: int | None = 4,
+        current_brief: dict | None = None,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> ChapterBriefSummary:
+        from llm_client import LLMClient, LLMError  # noqa: WPS433
+        from state_parser import extract_block  # noqa: WPS433
+
+        log = on_progress or (lambda _msg: None)
+        s = self._load(project_id)
+        chapter = s.chapters.get(chapter_number)
+        if chapter is None:
+            raise ChapterNotFound(chapter_number)
+        max_beats = self._normalize_brief_max_beats(max_beats)
+        beat_importance_threshold = self._normalize_brief_importance_threshold(
+            beat_importance_threshold,
+        )
+        if source not in self._TIMELINE_SOURCES:
+            raise BadRequest("source must be best, draft, revised, or final")
+
+        found = self._timeline_text_for_generation(project_id, chapter_number, source)
+        outline = _read(self._stage_paths(project_id, chapter_number)["outline"]) or ""
+        if found:
+            source_label, source_text = found
+        elif outline.strip():
+            source_label, source_text = "outline", outline
+        else:
+            raise BadRequest("No outline, final, revised, or draft text found for this chapter.")
+
+        prompt = self._ai_chapter_brief_prompt(
+            chapter_number,
+            title=chapter.title or "",
+            source_label=source_label,
+            source_text=source_text,
+            existing_outline=outline if found else "",
+            max_beats=max_beats,
+            beat_importance_threshold=beat_importance_threshold,
+        )
+        feedback_dir = self._project_dir(project_id) / "outputs" / "feedback"
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+        nnn = f"{chapter_number:03d}"
+        prompt_path = feedback_dir / f"chapter_{nnn}_brief_prompt.md"
+        prompt_path.write_text(prompt, encoding="utf-8")
+
+        log(f"Generating chapter {chapter_number} brief with AI ({source_label})...")
+        try:
+            raw = LLMClient().run_agent("archivist", prompt)
+        except LLMError as exc:
+            raise RuntimeError(f"Chapter brief generation failed: {exc}") from exc
+
+        report_path = feedback_dir / f"chapter_{nnn}_brief_report.md"
+        report_path.write_text(raw, encoding="utf-8")
+        ai_brief = (extract_block(raw, "CHAPTER_BRIEF") or raw).strip()
+        if not ai_brief:
+            raise RuntimeError("Archivist returned an empty chapter brief.")
+
+        current = (
+            self._chapter_brief_from_current_fields(chapter_number, current_brief)
+            if current_brief is not None
+            else None
+        )
+        return self._generate_chapter_brief_from_materials(
+            s,
+            chapter,
+            outline=ai_brief,
+            body_text=source_text if found else "",
+            source_label=f"{source_label} AI brief",
+            max_beats=max_beats,
+            beat_importance_threshold=beat_importance_threshold,
+            current_brief=current,
+            require_scored_beats=True,
+        )
+
+    def make_chapter_brief_job(
+        self,
+        project_id: str,
+        chapter_number: int,
+        *,
+        source: str = "best",
+        max_beats: int | None = None,
+        beat_importance_threshold: int | None = 4,
+        current_brief: dict | None = None,
+    ):
+        s = self._load(project_id)
+        if chapter_number not in s.chapters:
+            raise ChapterNotFound(chapter_number)
+        max_beats = self._normalize_brief_max_beats(max_beats)
+        beat_importance_threshold = self._normalize_brief_importance_threshold(
+            beat_importance_threshold,
+        )
+
+        def fn() -> None:
+            generated = self.generate_chapter_brief_ai(
+                project_id,
+                chapter_number,
+                source=source,
+                max_beats=max_beats,
+                beat_importance_threshold=beat_importance_threshold,
+                current_brief=current_brief,
+                on_progress=_operational_log,
+            )
+            self.save_chapter_brief(project_id, chapter_number, generated.model_dump())
+
+        return fn
+
+    @staticmethod
+    def _normalize_brief_max_beats(max_beats: int | None) -> int | None:
+        """Return None for uncapped brief beats; positive values are explicit caller caps."""
+        if max_beats is None:
+            return None
+        try:
+            value = int(max_beats)
+        except (TypeError, ValueError):
+            raise BadRequest("max_beats must be omitted, null, zero, or a positive integer") from None
+        if value < 0:
+            raise BadRequest("max_beats must be omitted, null, zero, or a positive integer")
+        return value or None
+
+    @staticmethod
+    def _normalize_brief_importance_threshold(value: int | None) -> int:
+        """Normalize the AI beat importance threshold to the supported 0-5 scale."""
+        if value is None:
+            return 4
+        try:
+            threshold = int(value)
+        except (TypeError, ValueError):
+            raise BadRequest("beat_importance_threshold must be an integer from 0 to 5") from None
+        if threshold < 0 or threshold > 5:
+            raise BadRequest("beat_importance_threshold must be an integer from 0 to 5")
+        return threshold
+
     def generate_chapter_briefs(
         self,
         project_id: str,
         *,
         source: str = "best",
-        max_beats: int = 5,
+        max_beats: int | None = None,
+        beat_importance_threshold: int | None = 4,
         overwrite_existing: bool = False,
+        use_ai: bool = False,
     ) -> GenerateChapterBriefsResult:
         s = self._load(project_id)
+        max_beats = self._normalize_brief_max_beats(max_beats)
+        beat_importance_threshold = self._normalize_brief_importance_threshold(
+            beat_importance_threshold,
+        )
         generated: list[ChapterBriefSummary] = []
         skipped: list[dict[str, str | int]] = []
-        for number in sorted(s.chapters):
+        numbers = sorted(s.chapters)
+        from job_progress import RollingJobProgress  # noqa: WPS433
+
+        progress = RollingJobProgress(total=len(numbers), unit="chapter brief")
+        progress.report("Preparing chapter brief batch")
+        for number in numbers:
             if s.get_chapter_brief(number) is not None and not overwrite_existing:
                 skipped.append({"chapter": number, "reason": "Brief already exists."})
+                progress.skip(f"Skipped chapter {number}")
                 continue
             try:
-                brief = self.generate_chapter_brief(
-                    project_id,
-                    number,
-                    source=source,
-                    max_beats=max_beats,
-                )
+                progress.start(f"Generating brief for chapter {number}")
+                if use_ai:
+                    brief = self.generate_chapter_brief_ai(
+                        project_id,
+                        number,
+                        source=source,
+                        max_beats=max_beats,
+                        beat_importance_threshold=beat_importance_threshold,
+                        on_progress=_operational_log,
+                    )
+                else:
+                    brief = self.generate_chapter_brief(
+                        project_id,
+                        number,
+                        source=source,
+                        max_beats=max_beats,
+                        beat_importance_threshold=beat_importance_threshold,
+                    )
                 generated.append(self.save_chapter_brief(project_id, number, brief.model_dump()))
+                progress.complete(f"Chapter {number} brief saved")
             except BadRequest as e:
                 skipped.append({"chapter": number, "reason": str(e)})
+                progress.skip(f"Skipped chapter {number}")
+        progress.report("Chapter brief batch complete")
         return GenerateChapterBriefsResult(generated=generated, skipped=skipped)
+
+    def make_chapter_briefs_job(
+        self,
+        project_id: str,
+        *,
+        source: str = "best",
+        max_beats: int | None = None,
+        beat_importance_threshold: int | None = 4,
+        overwrite_existing: bool = False,
+    ):
+        self._project_dir(project_id)
+        max_beats = self._normalize_brief_max_beats(max_beats)
+        beat_importance_threshold = self._normalize_brief_importance_threshold(
+            beat_importance_threshold,
+        )
+
+        def fn() -> None:
+            self.generate_chapter_briefs(
+                project_id,
+                source=source,
+                max_beats=max_beats,
+                beat_importance_threshold=beat_importance_threshold,
+                overwrite_existing=overwrite_existing,
+                use_ai=True,
+            )
+
+        return fn
 
     def auto_title_chapter_stats(self, project_id: str) -> BatchExtractOutlineStats:
         s = self._load(project_id)
@@ -4851,27 +5545,57 @@ class ProjectService:
         targets = stats.missing_chapters if scope == "eligible" else stats.secondary_chapters
         generated: list[ChapterTitleResult] = []
         skipped: list[dict[str, str | int]] = []
+        from job_progress import RollingJobProgress  # noqa: WPS433
+
+        progress = RollingJobProgress(total=len(targets), unit="chapter title")
+        progress.report("Preparing title batch")
         for number in targets:
             chapter = self._load(project_id).chapters.get(number)
             if chapter is None:
                 skipped.append({"chapter": number, "reason": "Chapter not found."})
+                progress.skip(f"Skipped chapter {number}")
                 continue
             title_source = (getattr(chapter, "title_source", "") or "").strip()
             if scope == "eligible" and title_source == "manual":
                 skipped.append({"chapter": number, "reason": "Title was set manually."})
+                progress.skip(f"Skipped chapter {number}")
                 continue
             if scope == "auto_only" and title_source != "auto":
                 skipped.append({"chapter": number, "reason": "Title was not auto-generated."})
+                progress.skip(f"Skipped chapter {number}")
                 continue
             try:
+                progress.start(f"Generating title for chapter {number}")
                 generated.append(
                     self.generate_chapter_title(project_id, number, source=source),
                 )
+                progress.complete(f"Chapter {number} title saved")
             except (BadRequest, ChapterNotFound) as exc:
                 skipped.append({"chapter": number, "reason": str(exc)})
+                progress.skip(f"Skipped chapter {number}")
             except (FileNotFoundError, ValueError, RuntimeError) as exc:
                 skipped.append({"chapter": number, "reason": str(exc)})
+                progress.skip(f"Skipped chapter {number}")
+        progress.report("Title batch complete")
         return GenerateChapterTitlesResult(generated=generated, skipped=skipped)
+
+    def make_chapter_titles_job(
+        self,
+        project_id: str,
+        *,
+        source: str = "best",
+        scope: str = "eligible",
+    ):
+        self._project_dir(project_id)
+        if scope not in {"eligible", "auto_only"}:
+            raise BadRequest("scope must be eligible or auto_only")
+        if source not in self._TIMELINE_SOURCES:
+            raise BadRequest("source must be best, draft, revised, or final")
+
+        def fn() -> None:
+            self.generate_chapter_titles(project_id, source=source, scope=scope)
+
+        return fn
 
     @staticmethod
     def _brief_graph_nodes_for_text(
@@ -4906,7 +5630,18 @@ class ProjectService:
             if score > 0:
                 scored.append((score, node.priority, node.id))
         scored.sort(key=lambda row: (-row[0], -row[1], row[2]))
-        return [node_id for _, _, node_id in scored[:12]]
+        selected: list[str] = []
+        selected_titles: list[str] = []
+        for _, _, node_id in scored:
+            node = state.story_graph_nodes.get(node_id)
+            title = (node.title if node else node_id) or node_id
+            if any(ProjectService._brief_story_node_titles_similar(title, seen) for seen in selected_titles):
+                continue
+            selected.append(node_id)
+            selected_titles.append(title)
+            if len(selected) >= 12:
+                break
+        return selected
 
     @staticmethod
     def _brief_label_key(label: str) -> str:
@@ -4931,9 +5666,21 @@ class ProjectService:
                 continue
             line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s*)", "", line).strip()
             line = re.sub(r"\*\*([^*]+?)\*\*", r"\1", line)
+            if line.startswith("|") and line.endswith("|"):
+                cells = [cell.strip() for cell in line.strip("|").split("|")]
+                if (
+                    len(cells) >= 2
+                    and not re.fullmatch(r":?-{2,}:?", cells[0])
+                    and cls._brief_label_key(cells[0]) not in {"field", "label", "metadata"}
+                ):
+                    label = cls._brief_label_key(cells[0])
+                    value = cls._brief_clean_value(cells[1])
+                    if label and value:
+                        pairs.append((label, value))
+                continue
             for part in re.split(r"\s+\|\s+", line):
                 match = re.match(
-                    r"^(?:#{1,6}\s*)?(?P<label>[A-Za-z][A-Za-z0-9 /_-]{0,48})\s*[:：—-]\s*(?P<value>.+)$",
+                    r"^(?:#{1,6}\s*)?(?P<label>[A-Za-z][A-Za-z0-9 ()/_-]{0,64})\s*[:：—-]\s*(?P<value>.+)$",
                     part.strip(),
                 )
                 if not match:
@@ -5039,17 +5786,134 @@ class ProjectService:
         return candidate
 
     @staticmethod
+    def _brief_character_name_key(name: str) -> str:
+        """Normalize character names for matching AI output to existing cast."""
+        folded = unicodedata.normalize("NFKD", name or "")
+        ascii_text = "".join(ch for ch in folded if not unicodedata.combining(ch))
+        ascii_text = re.sub(r"[^a-z0-9]+", " ", ascii_text.lower()).strip()
+        return re.sub(r"\s+", " ", ascii_text)
+
+    @staticmethod
+    def _brief_character_names_similar(left: str, right: str) -> bool:
+        left = ProjectService._brief_character_name_key(left)
+        right = ProjectService._brief_character_name_key(right)
+        if not left or not right:
+            return False
+        if left == right:
+            return True
+        if min(len(left), len(right)) >= 6 and (left in right or right in left):
+            return True
+        return SequenceMatcher(None, left, right).ratio() >= 0.92
+
+    @staticmethod
+    def _brief_story_node_titles_similar(left: str, right: str) -> bool:
+        left = ProjectService._brief_character_name_key(left)
+        right = ProjectService._brief_character_name_key(right)
+        if not left or not right:
+            return False
+        if left == right:
+            return True
+        if min(len(left), len(right)) >= 6 and (left in right or right in left):
+            return True
+        return SequenceMatcher(None, left, right).ratio() >= 0.86
+
+    @classmethod
+    def _brief_character_ids_from_section(
+        cls,
+        state: StoryState,
+        text: str,
+        headings: set[str],
+    ) -> list[str]:
+        keys = {cls._brief_label_key(h) for h in headings}
+        capture = False
+        ids: list[str] = []
+        seen: set[str] = set()
+        for raw in (text or "").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            label = re.match(r"^(?P<label>[A-Za-z][A-Za-z0-9 _-]{1,64})\s*:\s*$", line)
+            heading = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", raw)
+            if label or heading:
+                current = cls._brief_label_key(label.group("label") if label else heading.group(1))
+                if capture and current not in keys:
+                    break
+                capture = current in keys
+                continue
+            if not capture:
+                continue
+            name = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s*)", "", line).strip()
+            name = cls._brief_clean_value(name)
+            cid = cls._brief_character_id_by_name(state, name)
+            if cid and cid not in seen:
+                ids.append(cid)
+                seen.add(cid)
+        return ids
+
+    @classmethod
+    def _dedupe_brief_cast_ids(
+        cls,
+        state: StoryState,
+        active_ids: list[str],
+        mentioned_ids: list[str],
+    ) -> tuple[list[str], list[str]]:
+        kept: list[str] = []
+
+        def is_duplicate(candidate_id: str) -> bool:
+            candidate = state.characters.get(candidate_id)
+            if candidate is None:
+                return candidate_id in kept
+            candidate_names = [candidate.full_name, *getattr(candidate, "aliases", [])]
+            for kept_id in kept:
+                if kept_id == candidate_id:
+                    return True
+                kept_char = state.characters.get(kept_id)
+                if kept_char is None:
+                    continue
+                kept_names = [kept_char.full_name, *getattr(kept_char, "aliases", [])]
+                if any(
+                    cls._brief_character_names_similar(candidate_name, kept_name)
+                    for candidate_name in candidate_names
+                    for kept_name in kept_names
+                ):
+                    return True
+            return False
+
+        active: list[str] = []
+        for cid in active_ids or []:
+            cid = (cid or "").strip()
+            if cid and not is_duplicate(cid):
+                active.append(cid)
+                kept.append(cid)
+
+        mentioned: list[str] = []
+        for cid in mentioned_ids or []:
+            cid = (cid or "").strip()
+            if cid and not is_duplicate(cid):
+                mentioned.append(cid)
+                kept.append(cid)
+        return active, mentioned
+
+    @staticmethod
     def _brief_character_id_by_name(state: StoryState, name: str) -> str:
-        target = (name or "").strip().lower()
+        target = ProjectService._brief_character_name_key(name)
         if not target:
             return ""
         for cid, char in state.characters.items():
-            names = [n.strip().lower() for n in char.all_names() if n.strip()]
+            names = [
+                ProjectService._brief_character_name_key(n)
+                for n in char.all_names()
+                if (n or "").strip()
+            ]
             if target in names:
                 return cid
         for cid, char in state.characters.items():
-            names = [n.strip().lower() for n in char.all_names() if n.strip()]
-            if any(target in n or n in target for n in names):
+            names = [
+                ProjectService._brief_character_name_key(n)
+                for n in char.all_names()
+                if (n or "").strip()
+            ]
+            if any(ProjectService._brief_character_names_similar(target, n) for n in names):
                 return cid
         return ""
 
@@ -5094,27 +5958,110 @@ class ProjectService:
         chapter,
         existing_brief: ChapterBrief | None,
         text: str,
+        *,
+        source_word_count: int = 0,
+        prefer_brief: bool = False,
     ) -> int:
         if existing_brief is not None and (existing_brief.target_word_count or 0) > 0:
-            return int(existing_brief.target_word_count)
+            existing_target = int(existing_brief.target_word_count)
+        else:
+            existing_target = 0
+        if prefer_brief and existing_target > 0:
+            return existing_target
         source_value = cls._brief_metadata_value(
             text,
             {
+                "desired word count",
+                "desired length",
+                "target length",
+                "target length words",
                 "target word count",
                 "word count target",
+                "word count target words",
                 "target words",
-                "target length",
                 "chapter length",
+                "length target",
+                "word count",
+                "word count target length",
+                "word count goal",
+                "wordcount target",
+                "wordcount",
+                "word_count_target",
                 "length",
             },
+        ) or cls._brief_markdown_section(
+            text,
+            {"target length", "target word count", "word count", "chapter length"},
         )
         parsed = cls._brief_int_from_text(source_value)
         if parsed > 0:
             return parsed
+        if existing_target > 0:
+            return existing_target
+        if source_word_count > 0:
+            return source_word_count
         chapter_target = int(getattr(chapter, "target_word_count", 0) or 0)
         if chapter_target > 0:
             return chapter_target
         return max(0, int(getattr(state.style_profile, "chapter_target_words", 0) or 0))
+
+    @staticmethod
+    def _brief_style_fingerprint_from_text(text: str) -> str:
+        """Aggregate prose-shape guidance for recreating style without quoting content."""
+        raw = (text or "").strip()
+        if not raw:
+            return ""
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", raw) if p.strip()]
+        sentences = [
+            s.strip()
+            for s in re.split(r"(?<=[.!?])\s+", raw)
+            if s.strip()
+        ]
+        words = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", raw)
+        if len(words) < 8:
+            return ""
+
+        def avg(values: list[int]) -> float:
+            return sum(values) / max(1, len(values))
+
+        avg_sentence = avg([len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", s)) for s in sentences])
+        avg_paragraph = avg([len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", p)) for p in paragraphs])
+        avg_word_len = avg([len(w) for w in words])
+        quoted_words = len(re.findall(r'"[^"]+"|“[^”]+”', raw))
+        quote_ratio = quoted_words / max(1, len(sentences))
+        question_count = raw.count("?")
+        exclamation_count = raw.count("!")
+        semicolon_count = raw.count(";")
+        dash_count = raw.count("—") + raw.count("--")
+        interior_markers = len(re.findall(
+            r"\b(thought|felt|knew|wondered|remembered|wanted|feared|hoped|realized|noticed)\b",
+            raw,
+            flags=re.IGNORECASE,
+        ))
+
+        sentence_label = "short, clipped" if avg_sentence < 11 else "long, flowing" if avg_sentence > 22 else "mid-length"
+        paragraph_label = "brief" if avg_paragraph < 55 else "dense" if avg_paragraph > 130 else "moderate"
+        diction_label = "plain" if avg_word_len < 4.6 else "elevated" if avg_word_len > 5.6 else "moderate"
+        dialogue_label = "dialogue-forward" if quote_ratio >= 0.45 else "dialogue-light"
+        interiority_label = "interior/reflective" if interior_markers >= max(2, len(sentences) // 4) else "externally focused"
+        punctuation_bits: list[str] = []
+        if question_count:
+            punctuation_bits.append("questions")
+        if exclamation_count:
+            punctuation_bits.append("exclamations")
+        if semicolon_count:
+            punctuation_bits.append("semicolons")
+        if dash_count:
+            punctuation_bits.append("dashes")
+        punctuation = ", ".join(punctuation_bits) if punctuation_bits else "clean sentence-ending punctuation"
+
+        return (
+            "Style fingerprint: "
+            f"{sentence_label} sentence cadence (avg {avg_sentence:.0f} words); "
+            f"{paragraph_label} paragraphing (avg {avg_paragraph:.0f} words); "
+            f"{dialogue_label}; {interiority_label}; "
+            f"{diction_label} diction; punctuation rhythm uses {punctuation}."
+        )
 
     @classmethod
     def _brief_style_fields_for_generation(
@@ -5122,11 +6069,20 @@ class ProjectService:
         state: StoryState,
         existing_brief: ChapterBrief | None,
         text: str,
+        *,
+        fingerprint_text: str = "",
+        prefer_brief: bool = False,
     ) -> dict[str, str]:
         style_profile = state.style_profile
         pov_mode_source = cls._brief_metadata_value(
             text,
-            {"pov mode", "point of view", "narrative perspective", "perspective"},
+            {
+                "narrative perspective",
+                "narrative point of view",
+                "perspective",
+                "point of view",
+                "pov mode",
+            },
         ) or cls._brief_metadata_value(text, {"pov"})
         source = {
             "pov_mode": cls._brief_normalize_pov_mode(pov_mode_source),
@@ -5146,6 +6102,8 @@ class ProjectService:
             cls._brief_metadata_value(text, {"vocabulary description", "vocabulary notes"}),
         ]
         source["style_notes"] = " ".join(dict.fromkeys(note for note in style_notes if note))
+        if not source["style_notes"]:
+            source["style_notes"] = cls._brief_style_fingerprint_from_text(fingerprint_text)
 
         defaults = {
             "pov_mode": (getattr(style_profile, "point_of_view", "") or "").strip(),
@@ -5157,8 +6115,13 @@ class ProjectService:
         }
         fields = dict.fromkeys(defaults, "")
         for key in fields:
+            source_value = source.get(key, "").strip()
             existing_value = (getattr(existing_brief, key, "") if existing_brief is not None else "") or ""
-            fields[key] = existing_value.strip() or source.get(key, "").strip() or defaults[key]
+            existing_value = existing_value.strip()
+            if prefer_brief:
+                fields[key] = existing_value or source_value or defaults[key]
+            else:
+                fields[key] = source_value or existing_value or defaults[key]
         return fields
 
     @classmethod
@@ -5202,7 +6165,73 @@ class ProjectService:
         return False
 
     @staticmethod
-    def _brief_beats_from_text(text: str, *, max_beats: int) -> list[str]:
+    def _is_important_prose_beat(line: str) -> bool:
+        """Heuristic for fallback prose extraction when no explicit beat list exists."""
+        text = re.sub(r"\*\*", "", (line or "")).strip()
+        if not text or ProjectService._is_pov_metadata_beat(text):
+            return False
+        if re.match(r"^[A-Za-z][A-Za-z0-9 ()/_-]{0,64}\s*[:：]", text):
+            return False
+        words = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", text)
+        if len(words) < 5:
+            return False
+        return bool(re.search(
+            r"\b("
+            r"accepts?|arrives?|attacks?|betrays?|breaks?|captures?|changes?|chooses?|"
+            r"confesses?|confronts?|decides?|discovers?|escapes?|fails?|finds?|forces?|"
+            r"frees?|gives?|learns?|leaves?|loses?|meets?|opens?|promises?|realizes?|"
+            r"refuses?|reveals?|saves?|sees?|starts?|stops?|takes?|threatens?|turns?|wins?"
+            r")\b",
+            text,
+            flags=re.IGNORECASE,
+        ))
+
+    @staticmethod
+    def _parse_brief_beat_importance(line: str) -> tuple[str, int | None, bool]:
+        """Return clean beat title, optional score, and whether score metadata was malformed."""
+        text = (line or "").strip()
+        prefix_score = re.match(r"^(?P<score>\d+)\s*\|\s*(?P<title>.+)$", text)
+        if prefix_score:
+            raw_score = prefix_score.group("score")
+            title = prefix_score.group("title").strip()
+            if re.fullmatch(r"[0-5]", raw_score):
+                return title, int(raw_score), False
+            return title, None, True
+
+        suffix_score = re.match(
+            r"^(?P<title>.+?)\s*\|\s*(?:importance_score|importance|score)\s*[:=]\s*(?P<score>[^|]+?)\s*$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if suffix_score:
+            raw_score = suffix_score.group("score").strip()
+            title = suffix_score.group("title").strip()
+            if re.fullmatch(r"[0-5]", raw_score):
+                return title, int(raw_score), False
+            return title, None, True
+
+        leading_score = re.match(
+            r"^(?:importance_score|importance|score)\s*[:=]\s*(?P<score>[^|]+?)\s*\|\s*(?P<title>.+)$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if leading_score:
+            raw_score = leading_score.group("score").strip()
+            title = leading_score.group("title").strip()
+            if re.fullmatch(r"[0-5]", raw_score):
+                return title, int(raw_score), False
+            return title, None, True
+
+        return text, None, False
+
+    @staticmethod
+    def _brief_beats_from_text(
+        text: str,
+        *,
+        max_beats: int | None,
+        beat_importance_threshold: int = 4,
+        require_scored_beats: bool = False,
+    ) -> list[str]:
         source_lines = list((text or "").splitlines())
         scoped: list[str] = []
         capturing = False
@@ -5220,7 +6249,10 @@ class ProjectService:
             elif capturing:
                 scoped.append(raw)
         lines = []
+        list_line_pattern = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s*)")
         for raw in scoped if found_beats_section else source_lines:
+            if not found_beats_section and not list_line_pattern.match(raw):
+                continue
             line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s*)", "", raw).strip()
             if len(line.split()) >= 3 and not ProjectService._is_pov_metadata_beat(line):
                 lines.append(line)
@@ -5228,7 +6260,7 @@ class ProjectService:
             lines = [
                 s.strip()
                 for s in re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text).strip())
-                if len(s.split()) >= 5 and not ProjectService._is_pov_metadata_beat(s)
+                if ProjectService._is_important_prose_beat(s)
             ]
         out: list[str] = []
         seen: set[str] = set()
@@ -5240,7 +6272,11 @@ class ProjectService:
             "continuity notes",
             "ending hook",
             "hook",
+            "prose style",
             "style notes",
+            "target word count",
+            "tone",
+            "vocabulary level",
         }
         for line in lines:
             if line.startswith("#"):
@@ -5250,13 +6286,24 @@ class ProjectService:
                 continue
             if ProjectService._is_pov_metadata_beat(line):
                 continue
+            line, score, malformed_score = ProjectService._parse_brief_beat_importance(line)
+            if malformed_score:
+                continue
+            if score is None:
+                if require_scored_beats:
+                    continue
+            elif score < beat_importance_threshold:
+                continue
+            line = line.strip()
+            if not line:
+                continue
             if len(line) > 180:
                 line = line[:177].rstrip() + "..."
             key = re.sub(r"\s+", " ", re.sub(r"\*\*", "", line).strip().lower()).strip(" .!?:;—-")
             if key and key not in seen:
                 out.append(line)
                 seen.add(key)
-            if len(out) >= max_beats:
+            if max_beats is not None and len(out) >= max_beats:
                 break
         return out
 

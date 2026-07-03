@@ -272,6 +272,50 @@ def strip_outline_pov_metadata(text: str) -> str:
     return "\n".join(collapsed).strip()
 
 
+def format_recent_landed_facts_block(
+    state: "StoryState",
+    chapter_number: int,
+    selected_node_ids: list[str],
+    *,
+    lookback_chapters: int = 4,
+    max_items: int = 6,
+) -> str:
+    """Prior landed beats linked to this chapter's graph focus; no blanket previous recap."""
+    focus = {nid for nid in selected_node_ids if (nid or "").strip()}
+    if not focus or chapter_number <= 1:
+        return ""
+
+    lines: list[str] = []
+    start = max(1, chapter_number - lookback_chapters)
+    for prior in range(chapter_number - 1, start - 1, -1):
+        for beat in state.get_chapter_beats(prior):
+            if (beat.status or "").strip().lower() != "landed":
+                continue
+            linked = {(nid or "").strip() for nid in (beat.linked_node_ids or []) if (nid or "").strip()}
+            if not linked or not (linked & focus):
+                continue
+            title = (beat.title or "").strip()
+            summary = (beat.summary or "").strip()
+            text = title
+            if summary and summary.lower() != title.lower():
+                text = f"{title} — {summary}" if title else summary
+            if not text:
+                continue
+            lines.append(f"- Ch. {prior}: {text}")
+            if len(lines) >= max_items:
+                break
+        if len(lines) >= max_items:
+            break
+
+    if not lines:
+        return ""
+    return (
+        "### Relevant Recent Landed Facts\n"
+        "_Only prior landed beats linked to the current chapter's active story nodes._\n"
+        + "\n".join(lines)
+    )
+
+
 def build_chapter_context_block(
     state: "StoryState",
     chapter: "ChapterState",
@@ -281,8 +325,7 @@ def build_chapter_context_block(
     budget=None,
 ) -> str:
     """Chapter brief (canonical) + plot + outline beats (metadata stripped, brief sections deduped)."""
-    from context_resolver import BUDGET_DRAFT  # noqa: WPS433
-    from plot_prompts import format_plot_threads_block  # noqa: WPS433
+    from context_resolver import BUDGET_DRAFT, brief_selected_graph_node_ids  # noqa: WPS433
     from story_graph import ChapterBrief, format_chapter_brief_prompt_context  # noqa: WPS433
 
     if budget is None:
@@ -300,9 +343,19 @@ def build_chapter_context_block(
     if brief_block.strip():
         sections.append(brief_block)
 
-    plot_block = format_plot_threads_block(state.get_active_plot_threads(), max_threads=8)
-    if plot_block.strip():
-        sections.append(plot_block)
+    selected_node_ids = brief_selected_graph_node_ids(state, brief)
+    recent_facts = format_recent_landed_facts_block(state, chapter.number, selected_node_ids)
+    if recent_facts.strip():
+        sections.append(recent_facts)
+
+    if not selected_node_ids:
+        from plot_prompts import format_plot_threads_block  # noqa: WPS433
+
+        active_threads = state.get_active_plot_threads()
+        if active_threads:
+            plot_block = format_plot_threads_block(active_threads, max_threads=8)
+            if plot_block.strip():
+                sections.append(plot_block)
 
     outline = strip_outline_pov_metadata((outline_text or "").strip())
     outline = strip_outline_brief_duplicate_sections(outline, brief)

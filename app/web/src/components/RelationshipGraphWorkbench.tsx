@@ -20,6 +20,7 @@ import "@xyflow/react/dist/style.css";
 import type { CharacterSummary } from "../api/client";
 import {
   computeRelationshipLayout,
+  focusedRelationshipGraph,
   readRelationshipLayout,
   toRelationshipFlowEdges,
   toRelationshipFlowNodes,
@@ -143,28 +144,41 @@ function RelationshipGraphWorkbenchInner({
     [searchItems, matchedIds],
   );
 
+  const activeMatchId = matchList[matchIndex] ?? null;
+  const focused = useMemo(
+    () => focusedRelationshipGraph(nodeIds, edges, selectedId ?? activeMatchId),
+    [nodeIds, edges, selectedId, activeMatchId],
+  );
+  const visibleNodeIds = focused.nodeIds;
+  const visibleEdges = focused.edges;
+  const visibleMatchedIds = useMemo(
+    () => (activeMatchId ? new Set([activeMatchId]) : matchedIds),
+    [activeMatchId, matchedIds],
+  );
+
   const flowNodeOptions = useMemo(
     () => ({
       selectedId,
       linkSourceId,
-      matchedIds,
-      activeMatchId: matchList[matchIndex] ?? null,
+      matchedIds: visibleMatchedIds,
+      activeMatchId,
     }),
-    [selectedId, linkSourceId, matchedIds, matchList, matchIndex],
+    [selectedId, linkSourceId, visibleMatchedIds, activeMatchId],
   );
 
   useEffect(() => {
     setMatchIndex(0);
-  }, [searchQuery]);
+    if (searchQuery.trim()) onSelectCharacter(null);
+  }, [searchQuery, onSelectCharacter]);
 
   useEffect(() => {
-    setFlowNodes(toRelationshipFlowNodes(nodeIds, nameById, roleById, positions, flowNodeOptions));
-    setFlowEdges(toRelationshipFlowEdges(edges));
-  }, [nodeIds, nameById, roleById, positions, flowNodeOptions, edges]);
+    setFlowNodes(toRelationshipFlowNodes(visibleNodeIds, nameById, roleById, positions, flowNodeOptions));
+    setFlowEdges(toRelationshipFlowEdges(visibleEdges));
+  }, [visibleNodeIds, nameById, roleById, positions, flowNodeOptions, visibleEdges]);
 
   useEffect(() => {
     fitView({ padding: 0.2, duration: 200 });
-  }, [characters.length, fitView]);
+  }, [visibleNodeIds.length, fitView]);
 
   useEffect(() => {
     const activeId = matchList[matchIndex];
@@ -223,9 +237,13 @@ function RelationshipGraphWorkbenchInner({
 
   const onNodeClickHandler = useCallback(
     (_event: React.MouseEvent, node: Node<RelationshipFlowNodeData>) => {
+      if (searchQuery.trim()) {
+        setSearchQuery("");
+        setMatchIndex(0);
+      }
       onNodeClick(node.id);
     },
-    [onNodeClick],
+    [onNodeClick, searchQuery],
   );
 
   const onResizePointerDown = useCallback(
@@ -279,7 +297,10 @@ function RelationshipGraphWorkbenchInner({
                 <ToolTip id="graph.searchPrevNext">
                   <button
                     type="button"
-                    onClick={() => setMatchIndex((i) => (matchList.length ? (i - 1 + matchList.length) % matchList.length : 0))}
+                    onClick={() => {
+                      onSelectCharacter(null);
+                      setMatchIndex((i) => (matchList.length ? (i - 1 + matchList.length) % matchList.length : 0));
+                    }}
                     className="rounded px-1 hover:bg-ink/5"
                     aria-label="Previous match"
                   >
@@ -290,7 +311,10 @@ function RelationshipGraphWorkbenchInner({
                 <ToolTip id="graph.searchPrevNext">
                   <button
                     type="button"
-                    onClick={() => setMatchIndex((i) => (matchList.length ? (i + 1) % matchList.length : 0))}
+                    onClick={() => {
+                      onSelectCharacter(null);
+                      setMatchIndex((i) => (matchList.length ? (i + 1) % matchList.length : 0));
+                    }}
                     className="rounded px-1 hover:bg-ink/5"
                     aria-label="Next match"
                   >

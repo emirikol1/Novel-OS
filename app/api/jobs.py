@@ -168,6 +168,16 @@ class JobRunner:
         with self._lock:
             self._update_unlocked(job_id, **fields)
 
+    def update_progress(self, job_id: str, progress: dict) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job.get("status") != "running":
+                return
+            existing = dict(job.get("progress") or {})
+            existing.update(progress)
+            existing["updated_at"] = _now()
+            job["progress"] = existing
+
     def flush(self, reason: str = "Cancelled by restart", reject_new: bool = False) -> int:
         """Mark in-flight jobs failed; optionally reject new submissions for restart."""
         with self._lock:
@@ -216,6 +226,7 @@ class JobRunner:
                     "screen": screen_for_kind(kind, meta),
                     "batch_id": batch_id,
                     "batch_size": len(self._groups.get(batch_id, set())) if batch_id else 1,
+                    "progress": job.get("progress"),
                 })
             rows.sort(key=lambda r: r["started_at"])
             return rows

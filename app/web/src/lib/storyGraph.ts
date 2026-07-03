@@ -1,4 +1,8 @@
-import type { StoryGraphEdgeSummary, StoryGraphNodeSummary } from "../api/client";
+import type {
+  ChapterBeatSummary,
+  StoryGraphEdgeSummary,
+  StoryGraphNodeSummary,
+} from "../api/client";
 
 export const NODE_KINDS = [
   "main",
@@ -31,6 +35,17 @@ export type LayoutNode = {
   height: number;
 };
 
+export type ChapterBeatsByChapter = Record<number, ChapterBeatSummary[]>;
+
+export type FocusedStoryGraph = {
+  nodes: StoryGraphNodeSummary[];
+  edges: StoryGraphEdgeSummary[];
+  focusId: string | null;
+  incomingIds: Set<string>;
+  outgoingIds: Set<string>;
+  hiddenNodeCount: number;
+};
+
 const NODE_W = 148;
 const NODE_H = 52;
 const LAYER_GAP = 88;
@@ -43,6 +58,126 @@ export function nodeDisplayEdges(
 ): StoryGraphEdgeSummary[] {
   const ids = new Set(nodes.map((n) => n.id));
   return edges.filter((e) => ids.has(e.source_id) && ids.has(e.target_id));
+}
+
+export function chapterBeatGraphNodeId(chapterNumber: number, beatId: string): string {
+  return `chapter-beat:${chapterNumber}:${beatId}`;
+}
+
+export function isChapterBeatGraphNodeId(nodeId: string): boolean {
+  return nodeId.startsWith("chapter-beat:");
+}
+
+export function isChapterBeatGraphEdgeId(edgeId: string): boolean {
+  return edgeId.startsWith("chapter-beat-edge:");
+}
+
+/**
+ * Project chapter beats are chapter-local rows, but the mind map needs them as
+ * visible leaves off the plot/story nodes they advance.
+ */
+export function buildChapterBeatGraph(
+  nodes: StoryGraphNodeSummary[],
+  edges: StoryGraphEdgeSummary[],
+  beatsByChapter: ChapterBeatsByChapter = {},
+): { nodes: StoryGraphNodeSummary[]; edges: StoryGraphEdgeSummary[] } {
+  const knownNodeIds = new Set(nodes.map((node) => node.id));
+  const beatNodes: StoryGraphNodeSummary[] = [];
+  const beatEdges: StoryGraphEdgeSummary[] = [];
+
+  for (const [chapterKey, beats] of Object.entries(beatsByChapter)) {
+    const chapterNumber = Number(chapterKey);
+    if (!Number.isFinite(chapterNumber) || chapterNumber < 1) continue;
+
+    for (const beat of beats) {
+      const linkedNodeIds = (beat.linked_node_ids ?? []).filter((id) => knownNodeIds.has(id));
+      if (linkedNodeIds.length === 0) continue;
+
+      const beatNodeId = chapterBeatGraphNodeId(chapterNumber, beat.id);
+      beatNodes.push({
+        id: beatNodeId,
+        kind: "beat",
+        title: beat.title,
+        description: beat.summary,
+        status: beat.status,
+        priority: 1,
+        linked_character_ids: [],
+        legacy_plot_thread_id: "",
+        created_from: "chapter_beat",
+        sort_order: chapterNumber * 1000 + beat.sort_order,
+        start_chapter: chapterNumber,
+        resolution_chapter: chapterNumber,
+        act: 0,
+        chapter_pins: [chapterNumber],
+      });
+
+      for (const linkedNodeId of linkedNodeIds) {
+        beatEdges.push({
+          id: `chapter-beat-edge:${chapterNumber}:${beat.id}:${linkedNodeId}`,
+          source_id: linkedNodeId,
+          target_id: beatNodeId,
+          kind: "contains",
+          label: `Ch. ${chapterNumber} beat`,
+        });
+      }
+    }
+  }
+
+  return {
+    nodes: [...nodes, ...beatNodes],
+    edges: [...edges, ...beatEdges],
+  };
+}
+
+/**
+ * Return the focused neighborhood around one node: the node itself, its
+ * immediate incoming neighbors (N-1), and outgoing neighbors (N+1).
+ */
+export function focusedStoryGraph(
+  nodes: StoryGraphNodeSummary[],
+  edges: StoryGraphEdgeSummary[],
+  focusId?: string | null,
+): FocusedStoryGraph {
+  const displayEdges = nodeDisplayEdges(nodes, edges);
+  if (!focusId || !nodes.some((node) => node.id === focusId)) {
+    return {
+      nodes,
+      edges: displayEdges,
+      focusId: null,
+      incomingIds: new Set(),
+      outgoingIds: new Set(),
+      hiddenNodeCount: 0,
+    };
+  }
+
+  const visibleIds = new Set([focusId]);
+  const incomingIds = new Set<string>();
+  const outgoingIds = new Set<string>();
+
+  for (const edge of displayEdges) {
+    if (edge.source_id === focusId) {
+      visibleIds.add(edge.target_id);
+      outgoingIds.add(edge.target_id);
+    }
+    if (edge.target_id === focusId) {
+      visibleIds.add(edge.source_id);
+      incomingIds.add(edge.source_id);
+    }
+  }
+
+  const visibleNodes = nodes.filter((node) => visibleIds.has(node.id));
+  const visibleEdges = displayEdges.filter(
+    (edge) => visibleIds.has(edge.source_id) && visibleIds.has(edge.target_id),
+  );
+
+  return {
+    nodes: visibleNodes,
+    edges: visibleEdges,
+    focusId,
+    incomingIds,
+    outgoingIds,
+    hiddenNodeCount: Math.max(0, nodes.length - visibleNodes.length),
+  };
 }
 
 export function kindLabel(kind: string): string {

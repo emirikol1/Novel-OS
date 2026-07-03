@@ -4,6 +4,29 @@ Features **10** (relationship graph) and **11** (family tree) visualize cast lin
 
 **Important:** Relationship data is still stored in the existing string map keyed by character ID. Canonical role/subrole labels are encoded into that string, not a separate edge table. Family tree layout uses **heuristic label classification** (mother, child, spouse, etc.) — ambiguous or custom labels may not appear in the genealogy view.
 
+## Design Intent
+
+The relationship graph and family tree are author-facing views over cast relationships. They should minimize manual relationship bookkeeping by making mined or authored links visible, searchable, and easy to correct.
+
+The relationship graph answers:
+
+- Who is connected to whom?
+- What is the current label from one character to another?
+- Which relationships are family, authority, alliance, rivalry, romance, coercion, or custom?
+- Which relationship facts should inform chapter planning and prompt context?
+
+The family tree answers a narrower question: which stored relationships can be interpreted as genealogy or household/family structure. It is derived from relationship labels and should not become a separate source of truth.
+
+## Product Principles
+
+- **Single source of truth:** Store character relationships on `Character.relationships` until there is a deliberate schema migration.
+- **Derived views:** Relationship graph, family tree, and future relationship timelines should derive from stored relationships rather than keep competing edge stores.
+- **Review first:** Character mining may propose relationship changes, but applying those changes should remain explicit and reviewable.
+- **Post-apply review:** Auto-accepted relationship updates should remain visible in the Review queue until marked reviewed or safely reverted.
+- **Clear ambiguity:** Custom or ambiguous labels should remain visible on the relationship graph even if they cannot be safely placed in the family tree.
+- **Low workload:** Users should be able to add or fix relationships from the graph, but should not need to rebuild relationship diagrams after every mining pass.
+- **Prompt relevance:** Relationship data should become more useful when selecting chapter focus, explaining why characters matter to a plot node, or warning about contradictory relationship labels.
+
 The relationship model is **canonical role + optional subrole**:
 
 - The **canonical role** drives grouping, inverse mapping, family-tree traversal, graph logic, miner normalization, and AI prompt consistency.
@@ -36,6 +59,17 @@ The relationship model is **canonical role + optional subrole**:
 2. View a tree built from family-classified links: parent, child, sibling, spouse, guardian, adopted.
 3. Spouse links show inline on each node; click names to open the character editor.
 4. Characters without family-classified links may only appear if they are roots (no inferred parent).
+
+### Intended future workflow
+
+1. Mine or import chapters.
+2. Review proposed character relationship changes.
+3. Apply accepted changes to `Character.relationships`.
+4. Use the relationship graph to inspect social structure and fix labels.
+5. Use the family tree only for genealogy/household review.
+6. Let chapter briefs and story graph context surface relationship relevance when drafting.
+
+Relationship graph suggestions use the shared Review tab. Safe revert is conservative: if removing a relationship would conflict with newer edits or leave dependent graph/review state ambiguous, the app should block the revert and explain the manual cleanup needed.
 
 ```mermaid
 flowchart LR

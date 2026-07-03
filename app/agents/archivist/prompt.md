@@ -16,6 +16,7 @@ Given an existing chapter of fiction, analyze it and emit structured update bloc
   - **Landed beats** are chapter-local events; do not treat them as automatic Story Bible canon.
 - Use **full character names** consistently.
 - For `New_Characters`, list every named character who appears or is clearly referenced.
+- For `Characters_Present`, list only characters directly on-page in the current scene/chapter: POV, speaking, acting, reacting, moving, being addressed in present action, or otherwise actively participating. Include the character's full name even if the prose uses a first name, surname, title, nickname, alias, or `[[char:...]]` label. Do not include characters who are only remembered, discussed, planned around, rumored about, reported on, or otherwise referenced while absent.
 - For roles use: `protagonist`, `antagonist`, `supporting`, or `minor`.
 - If POV is unclear, name the most likely POV character.
 - The `[IMPORT_STATE_UPDATE]` block must be the **last** content in your response.

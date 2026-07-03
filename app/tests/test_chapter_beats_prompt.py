@@ -34,7 +34,6 @@ def test_infer_cast_from_text_splits_mentioned_and_active(tmp_path):
         "but he never appeared on the page."
     )
     mentioned, active = infer_cast_from_text(state, text, pov_name="Alice")
-    assert "char_a" in mentioned
     assert "char_b" in mentioned
     assert "char_a" in active
     assert "char_b" not in active
@@ -45,7 +44,7 @@ def test_infer_cast_from_text_includes_char_mentions(tmp_path):
     text = "They talked about [[char:Bob]] while Alice watched."
     mentioned, active = infer_cast_from_text(state, text, pov_name="Alice")
     assert "char_b" in mentioned
-    assert "char_a" in mentioned
+    assert "char_a" in active
 
 
 def test_beats_for_prompt_prefers_chapter_beats(tmp_path):

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,12 +27,49 @@ ALLOWED_CHARACTER_FIELDS = frozenset({
     "last_appearance_chapter",
 })
 
+_DIALOGUE_VERBS = (
+    "said", "says", "asked", "asks", "replied", "replies", "answered", "answers",
+    "whispered", "whispers", "shouted", "shouts", "muttered", "mutters",
+    "growled", "growls", "sighed", "sighs", "called", "calls", "told", "tells",
+    "warned", "warns", "admitted", "admits", "confessed", "confesses",
+    "explained", "explains", "demanded", "demands", "ordered", "orders",
+    "insisted", "insists", "revealed", "reveals",
+)
+_ACTION_VERBS = (
+    "walked", "walks", "ran", "runs", "entered", "enters", "left", "leaves",
+    "stood", "stands", "sat", "sits", "looked", "looks", "turned", "turns",
+    "stepped", "steps", "moved", "moves", "reached", "reaches", "took", "takes",
+    "grabbed", "grabs", "held", "holds", "touched", "touches", "nodded", "nods",
+    "shook", "shakes", "smiled", "smiles", "frowned", "frowns", "laughed",
+    "laughs", "cried", "cries", "watched", "watches", "stared", "stares",
+    "pointed", "points", "opened", "opens", "closed", "closes", "pushed",
+    "pushes", "pulled", "pulls", "knelt", "kneels", "crouched", "crouches",
+)
+
+def _name_variants(char_name: str | Iterable[str]) -> List[str]:
+    raw_names = [char_name] if isinstance(char_name, str) else list(char_name)
+    names: List[str] = []
+    seen: set[str] = set()
+    for raw in raw_names:
+        name = str(raw or "").strip()
+        key = name.lower()
+        if not name or key in seen:
+            continue
+        names.append(name)
+        seen.add(key)
+    return names
+
+
 def _presence_patterns(char_name: str) -> tuple[str, ...]:
     escaped = re.escape(char_name)
+    dialogue = "|".join(_DIALOGUE_VERBS)
+    action = "|".join(_ACTION_VERBS)
+    location = "in|at|on|inside|outside|near|beside|with"
     return (
-        rf"\b{escaped}\b\s+(?:said|asked|replied|whispered|shouted|muttered|growled|sighed)",
-        rf"\b{escaped}\b\s+(?:walked|ran|entered|left|stood|sat|looked|turned)",
-        rf"\b{escaped}\b\s+(?:was|is)\s+(?:in|at|on)\b",
+        rf"\b{escaped}\b\s+(?:{dialogue})\b",
+        rf"\b{escaped}\b\s+(?:{action})\b",
+        rf"\b{escaped}\b\s+(?:was|is|were|are)\s+(?:{location})\b",
+        rf"\b(?:{dialogue})\b\s+\b{escaped}\b",
     )
 
 
@@ -87,12 +125,13 @@ def _char_by_name(state: "StoryState", name: str):
     return None
 
 
-def _detect_explicit_presence(char_name: str, chapter_text: str, pov: str) -> bool:
+def _detect_explicit_presence(char_name: str | Iterable[str], chapter_text: str, pov: str) -> bool:
     plain = strip_mentions(chapter_text)
-    if pov and pov.strip().lower() == char_name.strip().lower():
-        if re.search(rf"\b{re.escape(char_name)}\b", plain, re.I):
-            return any(re.search(p, plain, re.I) for p in _presence_patterns(char_name))
-    return any(re.search(p, plain, re.I) for p in _presence_patterns(char_name))
+    return any(
+        re.search(pattern, plain, re.I)
+        for name in _name_variants(char_name)
+        for pattern in _presence_patterns(name)
+    )
 
 
 def suggest_conservative_updates(
@@ -119,7 +158,8 @@ def suggest_conservative_updates(
         key = (char.id, "last_appearance_chapter")
         if key in seen:
             continue
-        if not _detect_explicit_presence(char.full_name, text, pov):
+        names = char.all_names() if hasattr(char, "all_names") else [char.full_name, *char.aliases]
+        if not _detect_explicit_presence(names, text, pov):
             continue
         seen.add(key)
         if char.last_appearance_chapter >= chapter_number:

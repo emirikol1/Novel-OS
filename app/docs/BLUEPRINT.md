@@ -1,8 +1,8 @@
 # Blueprint Plot Canvas
 
-The **Blueprint** tab is a **read-only** planning board: chapter cards grouped into three act lanes, outline snippets, pipeline status, and plot-thread tags inferred from outline text. It mirrors existing StoryState and chapter artifacts — **no drag-and-drop, no canvas coordinates, no mutation**.
+The **Blueprint** tab is a **read-only** specialized view in the connected graph system: chapter cards grouped into three act lanes, outline snippets, pipeline status, graph-node assignments from briefs, and plot-thread tags inferred from outline text. It mirrors existing StoryState and chapter artifacts — **no drag-and-drop, no canvas coordinates, no mutation**.
 
-**Important:** Edit chapters, outlines, and plot threads in their respective tabs. The blueprint does not write back to StoryState.
+**Important:** Edit chapters, outlines, graph nodes, and plot threads in their respective tabs. The blueprint does not write back to StoryState. Use the Review tab for mined or generated graph/mapping changes that affect what appears here.
 
 ---
 
@@ -10,7 +10,7 @@ The **Blueprint** tab is a **read-only** planning board: chapter cards grouped i
 
 1. Open **Blueprint** tab.
 2. Review **Act I / II / III** lanes (chapters split by count: ⌈n/3⌉, ⌈2n/3⌉−⌈n/3⌉, remainder).
-3. Each card shows chapter number, title, pipeline dot, optional outline snippet, and matched plot-thread chips.
+3. Each card shows chapter number, title, pipeline dot, optional outline snippet, graph-node chips from chapter briefs, and matched plot-thread chips.
 4. Toggle **Compact** / **Detailed** view (saved in `localStorage` under `novel-os:blueprint-view-mode`).
 5. Click a plot-thread chip → **Plot Threads** tab with that thread selected.
 6. Click a chapter card → chapter view for that number.
@@ -20,12 +20,16 @@ flowchart LR
     Chapters["ChapterSummary list"]
     Outlines["GET /chapters/{n}/stages outline"]
     Threads["PlotThreadSummary list"]
+    GraphNodes["StoryGraphNodeSummary list"]
+    Briefs["ChapterBrief summaries"]
     Build["buildBlueprintCanvas"]
     Panel["BlueprintCanvasPanel"]
 
     Chapters --> Build
     Outlines --> Build
     Threads --> Build
+    GraphNodes --> Build
+    Briefs --> Build
     Build --> Panel
 ```
 
@@ -47,8 +51,9 @@ This is a **display heuristic**, not proof the thread advances in that chapter.
 
 - **Read-only** — no PATCH/POST from the canvas.
 - **Does not** store layout JSON on `PlotThread` or chapters.
-- **Does not** affect agent prompts or continuity checks.
+- **Does not** directly affect agent prompts or continuity checks; chapter brief graph selections are what control prompt context.
 - Act boundaries are **mathematical thirds**, not author-defined act breaks.
+- Reviewable graph changes can alter what the Blueprint displays after the author applies or auto-accepts them.
 
 ---
 

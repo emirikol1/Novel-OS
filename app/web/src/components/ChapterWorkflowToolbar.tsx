@@ -26,6 +26,7 @@ export type ChapterWorkflowToolbarProps = {
   regenerating: boolean;
   expanding: boolean;
   formattingParagraphs: boolean;
+  checkingDialogueQuotes: boolean;
   redrafting: boolean;
   outlineGenerating: boolean;
   splittingChapter: boolean;
@@ -52,6 +53,7 @@ export type ChapterWorkflowToolbarProps = {
   onRedraftFromBrief: () => void;
   onExpandPlaceholders: () => void;
   onFormatParagraphs: () => void;
+  onCheckDialogueQuotes: () => void;
   onAlignBoundary: () => void;
   onRegenerateOutline: (mode: "notes" | "text") => void;
   onSplitChapter: () => void;
@@ -205,6 +207,7 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
     regenerating,
     expanding,
     formattingParagraphs,
+    checkingDialogueQuotes,
     redrafting,
     outlineGenerating,
     splittingChapter,
@@ -230,6 +233,7 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
     onRedraftFromBrief,
     onExpandPlaceholders,
     onFormatParagraphs,
+    onCheckDialogueQuotes,
     onAlignBoundary,
     onRegenerateOutline,
     onSplitChapter,
@@ -342,6 +346,7 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
               disabled={
                 isRunning
                 || formattingParagraphs
+                || checkingDialogueQuotes
                 || expanding
                 || regenerating
                 || redrafting
@@ -353,6 +358,24 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
               tipId="chapter.formatParagraphs"
               onClick={onFormatParagraphs}
             />
+            <RunButton
+              label={checkingDialogueQuotes ? "Checking quotes…" : "Check Quotes"}
+              running={checkingDialogueQuotes}
+              disabled={
+                isRunning
+                || formattingParagraphs
+                || checkingDialogueQuotes
+                || expanding
+                || regenerating
+                || redrafting
+                || !hasRegenerateSource
+                || hasActivePreview
+              }
+              resume={lastFn === "check-dialogue-quotes"}
+              resumeLabel={CHAPTER_FUNCTION_LABELS["check-dialogue-quotes"]}
+              tipId="chapter.checkDialogueQuotes"
+              onClick={onCheckDialogueQuotes}
+            />
             {hasNextChapter && (
               <RunButton
                 label={aligningBoundary ? "Aligning…" : "Fix chapter alignment"}
@@ -361,6 +384,7 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
                   isRunning
                   || aligningBoundary
                   || formattingParagraphs
+                  || checkingDialogueQuotes
                   || expanding
                   || regenerating
                   || redrafting
@@ -386,6 +410,7 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
             disabled={
               isRunning
               || formattingParagraphs
+              || checkingDialogueQuotes
               || expanding
               || regenerating
               || redrafting
@@ -397,6 +422,24 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
             tipId="chapter.formatParagraphs"
             onClick={onFormatParagraphs}
           />
+          <RunButton
+            label={checkingDialogueQuotes ? "Checking quotes…" : "Check Quotes"}
+            running={checkingDialogueQuotes}
+            disabled={
+              isRunning
+              || formattingParagraphs
+              || checkingDialogueQuotes
+              || expanding
+              || regenerating
+              || redrafting
+              || !hasRegenerateSource
+              || hasActivePreview
+            }
+            resume={lastFn === "check-dialogue-quotes"}
+            resumeLabel={CHAPTER_FUNCTION_LABELS["check-dialogue-quotes"]}
+            tipId="chapter.checkDialogueQuotes"
+            onClick={onCheckDialogueQuotes}
+          />
           {hasNextChapter && (
             <RunButton
               label={aligningBoundary ? "Aligning…" : "Fix chapter alignment"}
@@ -405,6 +448,7 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
                 isRunning
                 || aligningBoundary
                 || formattingParagraphs
+                || checkingDialogueQuotes
                 || expanding
                 || regenerating
                 || redrafting
@@ -457,7 +501,15 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
               <RunButton
                 label={regenerating ? "Regenerating…" : "Regenerate"}
                 running={regenerating}
-                disabled={isRunning || regenerating || expanding || formattingParagraphs || redrafting || !hasRegenerateSource}
+                disabled={
+                  isRunning
+                  || regenerating
+                  || expanding
+                  || formattingParagraphs
+                  || checkingDialogueQuotes
+                  || redrafting
+                  || !hasRegenerateSource
+                }
                 resume={lastFn === "regenerate"}
                 resumeLabel={CHAPTER_FUNCTION_LABELS.regenerate}
                 tipId="chapter.regenerate"
@@ -466,7 +518,16 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
               <RunButton
                 label={redrafting ? "Redrafting…" : "Redraft from brief"}
                 running={redrafting}
-                disabled={isRunning || redrafting || regenerating || expanding || !hasRegenerateSource || !hasSavedBrief}
+                disabled={
+                  isRunning
+                  || redrafting
+                  || regenerating
+                  || expanding
+                  || formattingParagraphs
+                  || checkingDialogueQuotes
+                  || !hasRegenerateSource
+                  || !hasSavedBrief
+                }
                 resume={lastFn === "redraft-from-brief"}
                 resumeLabel={CHAPTER_FUNCTION_LABELS["redraft-from-brief"]}
                 tipId="chapter.redraftFromBrief"
@@ -510,7 +571,15 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
                       : "Expand placeholders"
                 }
                 running={expanding}
-                disabled={isRunning || expanding || regenerating || redrafting || expandMarkerCount === 0}
+                disabled={
+                  isRunning
+                  || expanding
+                  || regenerating
+                  || redrafting
+                  || formattingParagraphs
+                  || checkingDialogueQuotes
+                  || expandMarkerCount === 0
+                }
                 resume={lastFn === "expand"}
                 resumeLabel={CHAPTER_FUNCTION_LABELS.expand}
                 tipId="chapter.expandPlaceholders"

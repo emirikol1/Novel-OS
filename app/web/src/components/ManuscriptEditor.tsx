@@ -15,6 +15,7 @@ import ManuscriptControls, {
 } from "./ManuscriptControls";
 import { surround, prefixLine, insertBlock } from "./editorCommands";
 import ToolTip from "./ToolTip";
+import { manuscriptProseClassName } from "../lib/manuscriptLayout";
 
 function MentionTips() {
   const [open, setOpen] = useState(false);
@@ -140,6 +141,7 @@ export default function ManuscriptEditor({
   focusAnnotationId,
   fluidLayout,
   showSaveStatus,
+  paragraphFormat,
 }: {
   stage: ManuscriptStage;
   text: string;
@@ -167,6 +169,7 @@ export default function ManuscriptEditor({
   /** Scales type size and column width with the studio center pane. */
   fluidLayout?: { columnMaxPx: number; fontRem: number };
   showSaveStatus?: boolean;
+  paragraphFormat?: string;
 }) {
   const cm = useRef<ReactCodeMirrorRef>(null);
   const [mode, setMode] = useState<"write" | "preview">("write");
@@ -369,6 +372,7 @@ export default function ManuscriptEditor({
             source={text}
             annotations={annotations}
             stage={stage}
+            className={manuscriptProseClassName(paragraphFormat)}
             style={{ fontSize: `${prefs.size}rem` }}
             bionic={prefs.bionicPreview}
             mentionTargets={mentionTargets}

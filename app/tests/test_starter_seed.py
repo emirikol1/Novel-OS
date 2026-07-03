@@ -47,7 +47,8 @@ def test_brief_invariants(fresh_state):
 
     active = set(brief.active_character_ids)
     mentioned = set(brief.mentioned_character_ids)
-    assert active <= mentioned
+    assert active
+    assert not (active & mentioned)
     assert brief.pov_character_id in active
     assert brief.active_node_ids == ["graph_node_001"]
 

@@ -443,6 +443,7 @@ class NovelOrchestrator:
         characters = self.state.get_all_characters()
         active_threads = self.state.get_active_plot_threads()
         brief = self.state.get_chapter_brief(chapter.number)
+        has_graph_focus = False
 
         prompt = f"""# ARCHITECT TASK: Outline Chapter {chapter.number}
 
@@ -460,8 +461,15 @@ word-count metadata in the outline output.
 
 """
         if brief:
+            from context_resolver import BUDGET_OUTLINE, brief_has_graph_focus  # noqa: WPS433
             from story_graph import format_chapter_brief_prompt_context  # noqa: WPS433
-            prompt += format_chapter_brief_prompt_context(self.state, brief) + "\n"
+
+            has_graph_focus = brief_has_graph_focus(self.state, brief)
+            prompt += format_chapter_brief_prompt_context(
+                self.state,
+                brief,
+                budget=BUDGET_OUTLINE,
+            ) + "\n"
         else:
             prompt += "### Relevant Characters\n"
             for char in characters:
@@ -474,8 +482,10 @@ word-count metadata in the outline output.
                     if rels:
                         prompt += f"relationships: {rels}\n"
 
-        from plot_prompts import format_plot_threads_block  # noqa: WPS433
-        prompt += "\n" + format_plot_threads_block(active_threads, max_threads=8)
+        if active_threads and not has_graph_focus:
+            from plot_prompts import format_plot_threads_block  # noqa: WPS433
+
+            prompt += "\n" + format_plot_threads_block(active_threads, max_threads=8)
 
         prompt += f"""
 ## Required Output Format
@@ -543,22 +553,10 @@ Write the beat-sheet now. Outline only — no prose.
                     if rels:
                         prompt += f"- Relationships: {rels}\n"
 
-        prompt += f"""
-### Previous Chapter Recap
-[Summary of Chapter {chapter.number - 1}]
-
-## Chapter Goals
-- [Primary plot advancement]
-- [Character development moment]
-- [Emotional beat to hit]
-
-## Scene Outline
-1. [Scene 1: Opening hook]
-2. [Scene 2: Complication]
-3. [Scene 3: Climax/Resolution]
-
+        prompt += """
 ## Writing Requirements
 - Follow the chapter brief POV, target length, and writing style blocks above
+- Use the Chapter Beats and Beat sheet above when present; otherwise build a coherent scene progression from the active story nodes and cast
 - Include at least 3 sensory details
 - End with a compelling hook
 
@@ -711,6 +709,7 @@ Write the beat-sheet now. Outline only — no prose.
 """
         brief_block = ""
         from chapter_prompt_builder import build_scribe_context_block  # noqa: WPS433
+        from context_resolver import BUDGET_REVISE  # noqa: WPS433
 
         outline_path = self.outputs_dir / f"chapter_{chapter.number:03d}_outline.md"
         outline_text = outline_path.read_text(encoding="utf-8").strip() if outline_path.exists() else ""
@@ -723,6 +722,7 @@ Write the beat-sheet now. Outline only — no prose.
             chapter,
             hint_text=hint,
             outline_text=outline_text or None,
+            budget=BUDGET_REVISE,
         )
         if brief_block.strip():
             brief_block = brief_block + "\n"
@@ -876,10 +876,12 @@ Provide:
         context = self.state.get_continuity_context(chapter_number)
         brief = self.state.get_chapter_brief(chapter_number)
         brief_block = ""
+        has_graph_focus = False
         if brief is not None:
-            from context_resolver import BUDGET_VALIDATION  # noqa: WPS433
+            from context_resolver import BUDGET_VALIDATION, brief_has_graph_focus  # noqa: WPS433
             from story_graph import format_chapter_brief_prompt_context  # noqa: WPS433
 
+            has_graph_focus = brief_has_graph_focus(self.state, brief)
             brief_block = format_chapter_brief_prompt_context(
                 self.state,
                 brief,
@@ -911,18 +913,16 @@ Provide:
             char = self.state.get_character(char_id)
             if char:
                 prompt += f"- **{char.full_name}**: {state or 'Unknown'}\n"
-        
-        prompt += "\n### Active Plot Threads\n"
-        for thread_data in context['active_threads']:
-            prompt += f"- **{thread_data['name']}**: {thread_data['description'][:80]}...\n"
+
+        if context['active_threads'] and not has_graph_focus:
+            prompt += "\n### Active Plot Threads\n"
+            for thread_data in context['active_threads']:
+                prompt += f"- **{thread_data['name']}**: {thread_data['description'][:80]}...\n"
         
         prompt += f"""
-### Previous Chapter Events
-[Check against Chapter {chapter_number - 1} events]
-
 ## Story Bible Reference
 - Genre: {self.state.metadata.get('genre', 'Unknown')}
-- World Rules: [Reference story_bible.md]
+- Use only the chapter brief, graph context, deterministic findings, and current state facts included in this prompt.
 
 ## Validation Tasks
 

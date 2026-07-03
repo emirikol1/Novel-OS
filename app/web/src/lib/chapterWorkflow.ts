@@ -9,6 +9,7 @@ export type ChapterFunction =
   | "redraft-from-brief"
   | "expand"
   | "format-paragraphs"
+  | "check-dialogue-quotes"
   | "align-boundary"
   | "outline-notes"
   | "outline-text"
@@ -138,6 +139,7 @@ export const CHAPTER_FUNCTION_LABELS: Record<ChapterFunction, string> = {
   "redraft-from-brief": "Redraft from brief",
   expand: "Expand placeholders",
   "format-paragraphs": "AI Paragraphs",
+  "check-dialogue-quotes": "Check dialogue quotes",
   "align-boundary": "Fix chapter alignment",
   "outline-notes": "Outline from notes",
   "outline-text": "Outline from text",

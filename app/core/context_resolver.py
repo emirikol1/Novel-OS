@@ -351,6 +351,46 @@ def resolve_graph_nodes(
     )
 
 
+def dedupe_node_ids(node_ids: Iterable[str]) -> List[str]:
+    """Normalize graph node ids while preserving first-seen order."""
+    seen: Set[str] = set()
+    selected: List[str] = []
+    for raw in node_ids or []:
+        node_id = (raw or "").strip()
+        if not node_id or node_id in seen:
+            continue
+        selected.append(node_id)
+        seen.add(node_id)
+    return selected
+
+
+def brief_selected_graph_node_ids(
+    state: "StoryState",
+    brief: "ChapterBrief",
+    *,
+    include_beats: bool = True,
+) -> List[str]:
+    """
+    Graph focus for a chapter prompt.
+
+    ChapterBrief.active_node_ids is authoritative; ChapterBeat.linked_node_ids
+    supplements it so beat-level plot activity reaches Scribe/Editor/Guardian
+    prompts without falling back to every legacy active plot thread.
+    """
+    selected: List[str] = list(brief.active_node_ids or [])
+    if include_beats:
+        from chapter_brief_utils import beats_for_prompt  # noqa: WPS433
+
+        for beat in beats_for_prompt(state, brief.chapter_number, brief):
+            selected.extend(beat.linked_node_ids or [])
+    return dedupe_node_ids(selected)
+
+
+def brief_has_graph_focus(state: "StoryState", brief: "ChapterBrief") -> bool:
+    """True when a brief or its chapter beats identify graph nodes for focus."""
+    return bool(brief_selected_graph_node_ids(state, brief))
+
+
 def format_bible_context_block(
     resolved: ResolvedContext,
     *,
@@ -420,7 +460,7 @@ def resolve_brief_graph_context(
 ) -> ResolvedContext:
     return resolve_graph_nodes(
         state,
-        selected_node_ids=brief.active_node_ids or [],
+        selected_node_ids=brief_selected_graph_node_ids(state, brief),
         active_character_ids=brief.active_character_ids or [],
         budget=budget,
         hint_text=hint_text,

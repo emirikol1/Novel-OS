@@ -232,6 +232,10 @@ def merge_save_payload(
         chapter_removals=chapter_removals,
         beat_removals=chapter_beat_removals,
     )
+    merged["reviewable_changes"] = merge_registry_dict(
+        incoming.get("reviewable_changes") or {},
+        on_disk.get("reviewable_changes") or {},
+    )
 
     if not (incoming.get("metadata") or {}) and on_disk.get("metadata"):
         merged["metadata"] = on_disk["metadata"]

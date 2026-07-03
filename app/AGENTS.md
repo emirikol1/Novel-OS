@@ -218,6 +218,8 @@ Foreshadowing_Planted: [List]
 [/SCRIBE_STATE_UPDATE]
 ```
 
+`Characters_Present` must include only full names of characters directly on-page in the scene/chapter: POV, speaking, acting, reacting, moving, being addressed in present action, or otherwise actively participating. Include known characters even when the prose uses a first name, surname, title, nickname, alias, or `[[char:...]]` label. Do not include characters who are only remembered, discussed, planned around, rumored about, reported on, or otherwise referenced while absent.
+
 ## Style Adaptation
 
 When Style Profile provided:

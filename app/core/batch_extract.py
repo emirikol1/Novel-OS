@@ -18,12 +18,13 @@ from chapter_miner import (
     apply_mine_preview_to_state,
     chapter_mine_preview_path,
 )
+from job_progress import RollingJobProgress
 from chapter_outline_generator import ChapterOutlineGenerator
 from chapter_regenerator import ChapterRegenerator
 
 BATCH_SOURCES = frozenset({"best", "draft", "revised", "final"})
 BEST_SOURCE_ORDER = ("final", "revised", "draft")
-CODEX_MINE_ORDER = ("plots", "characters", "bible")
+CODEX_MINE_ORDER = ("characters", "plots", "bible")
 
 
 def resolve_chapter_source(
@@ -216,6 +217,8 @@ def batch_extract_outlines(
     failed: list[dict] = []
 
     log(f"Batch outline extraction — {len(numbers)} chapter(s), source={source}")
+    progress = RollingJobProgress(total=len(numbers), unit="chapter")
+    progress.report("Preparing outline batch")
 
     for idx, number in enumerate(numbers, start=1):
         from job_control import check_job_cancelled  # noqa: WPS433
@@ -227,6 +230,7 @@ def batch_extract_outlines(
                 "chapter": number,
                 "reason": "Outline already exists (saved or preview pending).",
             })
+            progress.skip(f"Skipped chapter {number}")
             continue
 
         resolved = resolve_chapter_source(reader, number, source)
@@ -235,10 +239,12 @@ def batch_extract_outlines(
                 "chapter": number,
                 "reason": "No final, revised, or draft text found.",
             })
+            progress.skip(f"Skipped chapter {number}")
             continue
 
         stage_label, _text = resolved
         log(f"[{idx}/{len(numbers)}] Outlining chapter {number} from {stage_label}…")
+        progress.start(f"Outlining chapter {number}")
         try:
             gen.generate(number, source=stage_label, on_progress=log)
             if auto_accept:
@@ -248,14 +254,17 @@ def batch_extract_outlines(
                 f"Chapter {number} outline "
                 f"{'saved' if auto_accept else 'preview ready'}."
             )
+            progress.complete(f"Chapter {number} outline ready")
         except Exception as exc:  # noqa: BLE001 — continue batch on single-chapter failure
             failed.append({"chapter": number, "error": f"{type(exc).__name__}: {exc}"})
             log(f"Chapter {number} outline failed: {type(exc).__name__}: {exc}")
+            progress.fail(f"Chapter {number} outline failed")
 
     log(
         f"Batch outlines done — generated {len(generated)}, "
         f"skipped {len(skipped)}, failed {len(failed)}."
     )
+    progress.report("Batch outlines complete")
     return {"generated": generated, "skipped": skipped, "failed": failed}
 
 
@@ -287,6 +296,8 @@ def batch_extract_codex(
         f"Batch codex extraction — {len(numbers)} chapter(s), "
         f"{len(CODEX_MINE_ORDER)} passes each, source={source}",
     )
+    progress = RollingJobProgress(total=len(numbers) * len(CODEX_MINE_ORDER), unit="codex pass")
+    progress.report("Preparing codex batch")
 
     for idx, number in enumerate(numbers, start=1):
         from job_control import check_job_cancelled  # noqa: WPS433
@@ -301,6 +312,7 @@ def batch_extract_codex(
                     "kind": kind,
                     "reason": "No final, revised, or draft text found.",
                 })
+                progress.skip(f"Skipped chapter {number} {kind}")
             continue
 
         stage_label, _text = resolved
@@ -316,9 +328,11 @@ def batch_extract_codex(
                     "kind": kind,
                     "reason": f"{kind} preview already exists.",
                 })
+                progress.skip(f"Skipped chapter {number} {kind}")
                 continue
 
             log(f"[{idx}/{len(numbers)}] Mining {kind} from chapter {number} ({stage_label})…")
+            progress.start(f"Mining {kind} from chapter {number}")
             try:
                 miner.mine(number, kind, source=stage_label, on_progress=log)
                 if auto_accept:
@@ -328,6 +342,7 @@ def batch_extract_codex(
                     f"Chapter {number} {kind} "
                     f"{'applied' if auto_accept else 'preview ready'}."
                 )
+                progress.complete(f"Chapter {number} {kind} ready")
             except Exception as exc:  # noqa: BLE001
                 failed.append({
                     "chapter": number,
@@ -335,9 +350,11 @@ def batch_extract_codex(
                     "error": f"{type(exc).__name__}: {exc}",
                 })
                 log(f"Chapter {number} {kind} failed: {type(exc).__name__}: {exc}")
+                progress.fail(f"Chapter {number} {kind} failed")
 
     log(
         f"Batch codex done — generated {len(generated)}, "
         f"skipped {len(skipped)}, failed {len(failed)}."
     )
+    progress.report("Batch codex complete")
     return {"generated": generated, "skipped": skipped, "failed": failed}

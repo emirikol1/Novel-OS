@@ -31,6 +31,37 @@ Brief v2 fields on seeded Chapter 1: `mentioned_character_ids`, `active_characte
 5. **Draft pipeline** — Generate Draft → Revise → Validate → Approve → Final.
 6. **Feedback loop** — Extract landed beats for chapter-local events; mine plots/characters/bible; review applies; re-sync graph after plot mining; promote only durable facts to Story Bible.
 
+## Reviewable AI Work
+
+Reviewable generation and extraction jobs should offer two modes:
+
+- **Queue for review:** generated changes appear in the **Review** tab before they modify trusted project state.
+- **Auto-accept:** generated changes are applied when ready, then remain in the **Review** tab as **Applied** until the author marks them reviewed or reverts them.
+
+Review cards show side-by-side before/after data. Revert is allowed only when the backend can prove the inverse operation is safe. If reverting would orphan graph links, invalidate references, or overwrite newer edits, Novel OS blocks the revert and explains what the author must resolve manually.
+
+Long prose changes should use preview/snapshot artifacts for side-by-side review rather than duplicating full manuscript text into operational logs.
+
+## Mine All
+
+The dashboard **Mine All** action runs project-level generation/extraction in the approved order:
+
+1. Extract or generate outlines.
+2. Mine characters.
+3. Mine plots.
+4. Mine bible facts.
+5. Generate graph suggestions and mapping.
+6. Generate chapter briefs only when auto-accept is selected; review-mode briefs need the reviewable brief wrapper before they can be queued safely.
+7. Refresh project indexes.
+
+Modes:
+
+- **Missing outlines:** only chapters without outlines are targeted.
+- **Missing chapter briefs:** runs prerequisite extraction/mapping, then fills missing briefs only when auto-accept is selected.
+- **Everything:** regenerates reviewable replacements or auto-accepted updates where supported.
+
+Findings appear in the Review tab as phases complete. Running status appears through the standard background job/LLM queue surfaces.
+
 ## Memory Surfaces
 
 | Surface | Use For | Do Not Use For |
@@ -66,7 +97,7 @@ Chapter briefs live per chapter in `story_state.json`:
 
 - `pov_character_id` — drives POV when outline generation does not override.
 - `mentioned_character_ids` — cast referenced this chapter (v2).
-- `active_character_ids` — subset of mentioned cast whose state should drive prompts (v2 triple toggle).
+- `active_character_ids` — cast directly present/included whose state should drive prompts (exclusive with mentioned cast).
 - `active_node_ids` — graph nodes that should advance this chapter (in effect, not just eligible).
 - `chapter_beats` — chapter-local beat board rows. Use `planned` for beats the chapter should hit and `landed` for events already present in manuscript text.
 - `continuity_notes`, `ending_hook` — author-facing planning text.

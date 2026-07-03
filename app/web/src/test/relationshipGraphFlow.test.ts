@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeRelationshipLayout,
+  focusedRelationshipGraph,
   reciprocalEdgeStyle,
   toRelationshipFlowEdges,
   toRelationshipFlowNodes,
@@ -76,5 +77,23 @@ describe("relationshipGraphFlow", () => {
     const handles = flowEdges.map((e) => `${e.sourceHandle}->${e.targetHandle}`);
     expect(handles).toContain("source-bottom->target-top");
     expect(handles).toContain("source-right->target-left");
+  });
+
+  it("focuses relationship graph to one character and immediate neighbors", () => {
+    const extended = [
+      ...characters,
+      { id: "d", full_name: "Dana", role: "minor", relationships: {} },
+    ];
+    const edges = buildRelationshipEdges(extended);
+    const focused = focusedRelationshipGraph(
+      extended.map((c) => c.id),
+      edges,
+      "a",
+    );
+
+    expect(focused.nodeIds.sort()).toEqual(["a", "b"]);
+    expect(focused.edges).toHaveLength(1);
+    expect(focused.outgoingIds.has("b")).toBe(true);
+    expect(focused.hiddenNodeCount).toBe(2);
   });
 });

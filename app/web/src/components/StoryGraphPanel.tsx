@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 import {
   api,
   type CharacterSummary,
+  type ChapterBeatSummary,
   type ChapterSummary,
   type StoryGraphEdgeSummary,
   type StoryGraphNodeSummary,
@@ -15,7 +16,9 @@ import {
   NODE_KINDS,
   NODE_STATUSES,
   kindLabel,
+  isChapterBeatGraphNodeId,
   nodeById,
+  type ChapterBeatsByChapter,
 } from "../lib/storyGraph";
 
 const GraphWorkbench = lazy(() => import("./GraphWorkbench"));
@@ -52,6 +55,7 @@ export default function StoryGraphPanel({
   const toast = useToast();
   const [nodes, setNodes] = useState<StoryGraphNodeSummary[]>([]);
   const [edges, setEdges] = useState<StoryGraphEdgeSummary[]>([]);
+  const [chapterBeats, setChapterBeats] = useState<ChapterBeatsByChapter>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -68,17 +72,28 @@ export default function StoryGraphPanel({
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
+    const chapterNumbers = [...new Set((chapters ?? []).map((chapter) => chapter.number))]
+      .filter((chapterNumber) => chapterNumber >= 1);
+    const chapterBeatRows = Promise.all(
+      chapterNumbers.map((chapterNumber) =>
+        api.listChapterBeats(projectId, chapterNumber)
+          .then((beats): [number, ChapterBeatSummary[]] => [chapterNumber, beats])
+          .catch((): [number, ChapterBeatSummary[]] => [chapterNumber, []]),
+      ),
+    );
     Promise.all([
       api.storyGraphNodes(projectId),
       api.storyGraphEdges(projectId),
+      chapterBeatRows,
     ])
-      .then(([n, e]) => {
+      .then(([n, e, beatRows]) => {
         setNodes(n);
         setEdges(e);
+        setChapterBeats(Object.fromEntries(beatRows));
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
-  }, [projectId]);
+  }, [projectId, chapters]);
 
   useEffect(() => {
     load();
@@ -87,6 +102,10 @@ export default function StoryGraphPanel({
   const nodesMap = useMemo(() => nodeById(nodes), [nodes]);
 
   function handleNodeClick(id: string) {
+    if (isChapterBeatGraphNodeId(id)) {
+      if (!linkMode) setSelectedId(id);
+      return;
+    }
     if (linkMode) {
       if (!linkSource) {
         setLinkSource(id);
@@ -258,6 +277,7 @@ export default function StoryGraphPanel({
             edges={edges}
             characters={characters}
             chapters={chapters}
+            chapterBeats={chapterBeats}
             selectedId={selectedId}
             linkSourceId={linkSource}
             onSelectNode={setSelectedId}

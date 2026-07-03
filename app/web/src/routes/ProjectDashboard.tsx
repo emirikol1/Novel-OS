@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, characterPortraitUrl, type BatchExtractOutlineStats, type ChapterStructureReport, type EntityDedupStatus, type ProjectDetail, type ChapterSummary, type CharacterSummary, type PlotThreadSummary, type TimelineEventSummary, type ResearchSparkSummary, type PlanOutlinePreview } from "../api/client";
+import { api, characterPortraitUrl, type BatchExtractOutlineStats, type ChapterStructureReport, type EntityDedupStatus, type MineAllMode, type ProjectDetail, type ChapterSummary, type CharacterSummary, type PlotThreadSummary, type TimelineEventSummary, type ResearchSparkSummary, type PlanOutlinePreview } from "../api/client";
 import ChapterBoard from "../components/ChapterBoard";
 import Outliner from "../components/Outliner";
 import TimelinePanel, { TimelineEventModal } from "../components/TimelinePanel";
@@ -21,7 +21,7 @@ import ManualMergeModal, { type MergeKind } from "../components/ManualMergeModal
 import ProjectBackupsModal from "../components/ProjectBackupsModal";
 import Modal, { Field, fieldClass } from "../components/Modal";
 import TargetLengthInput from "../components/TargetLengthInput";
-import { DEFAULT_PROJECT_STYLE } from "../lib/chapterBrief";
+import { DEFAULT_PROJECT_STYLE, type ParagraphFormat } from "../lib/chapterBrief";
 import { useToast } from "../components/Toaster";
 import { useConfirm } from "../components/Confirm";
 import { useBackgroundJob } from "../hooks/useBackgroundJob";
@@ -35,6 +35,7 @@ import { syncProjectPreviewPendingFromApi } from "../lib/syncChapterPreviewPendi
 import ChapterMinePreviewModal from "../components/ChapterMinePreviewModal";
 import BatchExtractSettingsModal from "../components/BatchExtractSettingsModal";
 import StoryPanelToggles from "../components/StoryPanelToggles";
+import ReviewableChangesInbox from "../components/ReviewableChangesInbox";
 import { remapChapterWorkflowMarkers } from "../lib/chapterWorkflow";
 import { PIPELINE_LABELS, pipelineStepFromSummary, type PipelineStep } from "../lib/chapterPipeline";
 import { buildWritingStats, PIPELINE_BUCKETS } from "../lib/writingStats";
@@ -58,7 +59,10 @@ const TOOLBAR_CHIP_DANGER =
 const TOOLBAR_FIELD =
   "rounded-md border border-paper-line bg-paper px-2.5 py-1 text-[12px] font-medium text-ink-text";
 
-type CodexTab = "importer" | "chapters" | "cast" | "relationships" | "family" | "storygraph" | "blueprint" | "timeline" | "research" | "map" | "bible";
+type CodexTab = "importer" | "chapters" | "cast" | "relationships" | "family" | "storygraph" | "review" | "blueprint" | "timeline" | "research" | "map" | "bible";
+type DashboardDataKey = "characters" | "plotThreads" | "timelineEvents" | "researchSparks";
+
+const DASHBOARD_WARMUP_DELAY_MS = 250;
 
 const CODEX_TAB_TIPS: Record<Exclude<CodexTab, "importer">, ToolTipId> = {
   chapters: "dashboard.tabChapters",
@@ -66,12 +70,31 @@ const CODEX_TAB_TIPS: Record<Exclude<CodexTab, "importer">, ToolTipId> = {
   relationships: "dashboard.tabRelationships",
   family: "dashboard.tabFamily",
   storygraph: "dashboard.tabStoryGraph",
+  review: "dashboard.tabReviewableChanges",
   blueprint: "dashboard.tabBlueprint",
   timeline: "dashboard.tabTimeline",
   research: "dashboard.tabResearch",
   map: "dashboard.tabMap",
   bible: "dashboard.tabBible",
 };
+
+function dataKeysForTab(tab: CodexTab): DashboardDataKey[] {
+  switch (tab) {
+    case "cast":
+    case "relationships":
+    case "family":
+    case "storygraph":
+      return ["characters"];
+    case "blueprint":
+      return ["characters", "plotThreads"];
+    case "timeline":
+      return ["characters", "timelineEvents"];
+    case "research":
+      return ["characters", "plotThreads", "researchSparks"];
+    default:
+      return [];
+  }
+}
 
 export default function ProjectDashboard() {
   const { id = "" } = useParams();
@@ -100,6 +123,9 @@ export default function ProjectDashboard() {
   const entityScanning = isProjectJobRunning("entity-dedup", id);
   const batchOutlinesRunning = isProjectJobRunning("batch-outlines", id);
   const batchCodexRunning = isProjectJobRunning("batch-codex", id);
+  const briefsBatchRunning = isProjectJobRunning("chapter-briefs", id);
+  const titlesBatchRunning = isProjectJobRunning("chapter-titles", id);
+  const mineAllRunning = isProjectJobRunning("mine-all", id);
   const [plotPanelIssuesOpen, setPlotPanelIssuesOpen] = useState(false);
   const [manualMerge, setManualMerge] = useState<MergeKind | null>(null);
   const plotMergeMode = "parallel" as const;
@@ -107,6 +133,7 @@ export default function ProjectDashboard() {
   const [backupsOpen, setBackupsOpen] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [editCharId, setEditCharId] = useState<string | null>(null);
+  const [editCharInitialFocus, setEditCharInitialFocus] = useState<"notes" | null>(null);
   const [plotModal, setPlotModal] = useState<PlotThreadSummary | null | "new">(null);
   const [timelineModalOpen, setTimelineModalOpen] = useState(false);
   const [researchModalOpen, setResearchModalOpen] = useState(false);
@@ -129,14 +156,78 @@ export default function ProjectDashboard() {
   const [codexBatchLoading, setCodexBatchLoading] = useState(false);
   const [briefBatchOpen, setBriefBatchOpen] = useState(false);
   const [briefBatchStats, setBriefBatchStats] = useState<BatchExtractOutlineStats | null>(null);
-  const [briefsBatchRunning, setBriefsBatchRunning] = useState(false);
   const [titleBatchOpen, setTitleBatchOpen] = useState(false);
   const [titleBatchStats, setTitleBatchStats] = useState<BatchExtractOutlineStats | null>(null);
   const [titleBatchLoading, setTitleBatchLoading] = useState(false);
-  const [titlesBatchRunning, setTitlesBatchRunning] = useState(false);
+  const [mineAllOpen, setMineAllOpen] = useState(false);
   const [projectOpsCollapsed, setProjectOpsCollapsed] = useState(true);
+  const dataProjectRef = useRef<string | null>(null);
+  const loadedDataRef = useRef<Set<DashboardDataKey>>(new Set());
+  const inflightDataRef = useRef<Map<DashboardDataKey, Promise<void>>>(new Map());
 
-  const load = useCallback(() => {
+  const resetDashboardData = useCallback((projectId: string) => {
+    dataProjectRef.current = projectId;
+    loadedDataRef.current = new Set();
+    inflightDataRef.current = new Map();
+    setCharacters([]);
+    setPlotThreads([]);
+    setTimelineEvents([]);
+    setResearchSparks([]);
+  }, []);
+
+  const ensureDashboardData = useCallback((keys: DashboardDataKey[], opts?: { force?: boolean }) => {
+    if (keys.length === 0) return;
+    if (dataProjectRef.current !== id) resetDashboardData(id);
+    keys.forEach((key) => {
+      if (!opts?.force && loadedDataRef.current.has(key)) return;
+      if (inflightDataRef.current.has(key)) return;
+
+      const projectId = id;
+      const request = (() => {
+        switch (key) {
+          case "characters":
+            return api.characters(projectId).then((value) => {
+              if (dataProjectRef.current === projectId) setCharacters(value);
+            }).catch(() => {
+              if (dataProjectRef.current === projectId) setCharacters([]);
+            });
+          case "plotThreads":
+            return api.plotThreads(projectId).then((value) => {
+              if (dataProjectRef.current === projectId) setPlotThreads(value);
+            }).catch(() => {
+              if (dataProjectRef.current === projectId) setPlotThreads([]);
+            });
+          case "timelineEvents":
+            return api.timelineEvents(projectId).then((value) => {
+              if (dataProjectRef.current === projectId) setTimelineEvents(value);
+            }).catch(() => {
+              if (dataProjectRef.current === projectId) setTimelineEvents([]);
+            });
+          case "researchSparks":
+            return api.researchSparks(projectId).then((value) => {
+              if (dataProjectRef.current === projectId) setResearchSparks(value);
+            }).catch(() => {
+              if (dataProjectRef.current === projectId) setResearchSparks([]);
+            });
+          default:
+            return Promise.resolve();
+        }
+      })().then(() => {
+        if (dataProjectRef.current === projectId) loadedDataRef.current.add(key);
+      }).finally(() => {
+        if (dataProjectRef.current === projectId) inflightDataRef.current.delete(key);
+      });
+
+      inflightDataRef.current.set(key, request);
+    });
+  }, [id, resetDashboardData]);
+
+  const loadProjectShell = useCallback((opts?: { resetData?: boolean }) => {
+    if (opts?.resetData || dataProjectRef.current !== id) {
+      setProject(null);
+      setChapters([]);
+      resetDashboardData(id);
+    }
     setError(null);
     api.project(id).then(setProject).catch((e) => {
       if (redirectOnProjectNotFound(e, navigate, toast)) return;
@@ -151,17 +242,34 @@ export default function ProjectDashboard() {
     }).catch((e) => {
       if (!isNotFoundError(e)) setError(String(e));
     });
-    api.characters(id).then(setCharacters).catch(() => setCharacters([]));
-    api.plotThreads(id).then(setPlotThreads).catch(() => setPlotThreads([]));
-    api.timelineEvents(id).then(setTimelineEvents).catch(() => setTimelineEvents([]));
-    api.researchSparks(id).then(setResearchSparks).catch(() => setResearchSparks([]));
     void syncMinePreviewPendingFromApi(id).catch(() => {});
     setStructureReport(null);
-  }, [id, navigate, toast]);
+  }, [id, navigate, resetDashboardData, toast]);
+
+  const load = useCallback(() => {
+    loadProjectShell();
+    const keys = new Set<DashboardDataKey>([
+      ...loadedDataRef.current,
+      ...dataKeysForTab(codexTab),
+    ]);
+    ensureDashboardData([...keys], { force: true });
+  }, [codexTab, ensureDashboardData, loadProjectShell]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadProjectShell({ resetData: true });
+  }, [loadProjectShell]);
+
+  useEffect(() => {
+    ensureDashboardData(dataKeysForTab(codexTab));
+  }, [codexTab, ensureDashboardData]);
+
+  useEffect(() => {
+    if (!project) return undefined;
+    const timer = window.setTimeout(() => {
+      ensureDashboardData(["characters", "plotThreads", "timelineEvents", "researchSparks"]);
+    }, DASHBOARD_WARMUP_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [ensureDashboardData, project]);
 
   useEffect(() => {
     const tab = searchParams.get("tab");
@@ -177,6 +285,7 @@ export default function ProjectDashboard() {
     const characterId = searchParams.get("character");
     if (characterId) {
       setCodexTab("cast");
+      setEditCharInitialFocus(null);
       setEditCharId(characterId);
     }
     if (searchParams.get("section")) {
@@ -354,22 +463,23 @@ export default function ProjectDashboard() {
 
     setBriefBatchOpen(false);
     setBriefBatchStats(null);
-    setBriefsBatchRunning(true);
     try {
-      const result = await api.generateChapterBriefs(id, {
+      const job = await api.generateChapterBriefsAsync(id, {
         source: "best",
-        max_beats: 5,
         overwrite_existing: !skipExisting,
       });
-      toast(
-        `Generated ${result.generated.length} brief(s); skipped ${result.skipped.length}.`,
-        result.generated.length ? "success" : "info",
-      );
-      load();
+      toast("Populating chapter briefs — running in background…", "success");
+      watchBackgroundJob(job.job_id, {
+        kind: "chapter-briefs",
+        projectId: id,
+        label: "Populate chapter briefs",
+        successMessage: "Chapter brief population complete",
+        onSuccess: () => {
+          load();
+        },
+      });
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err), "error");
-    } finally {
-      setBriefsBatchRunning(false);
     }
   }
 
@@ -422,18 +532,20 @@ export default function ProjectDashboard() {
 
     setTitleBatchOpen(false);
     setTitleBatchStats(null);
-    setTitlesBatchRunning(true);
     try {
-      const result = await api.generateChapterTitles(id, { source: "best", scope });
-      toast(
-        `Generated ${result.generated.length} title(s); skipped ${result.skipped.length}.`,
-        result.generated.length ? "success" : "info",
-      );
-      load();
+      const job = await api.generateChapterTitlesAsync(id, { source: "best", scope });
+      toast("Auto-titling chapters — running in background…", "success");
+      watchBackgroundJob(job.job_id, {
+        kind: "chapter-titles",
+        projectId: id,
+        label: "Auto-title chapters",
+        successMessage: "Chapter auto-titles complete",
+        onSuccess: () => {
+          load();
+        },
+      });
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err), "error");
-    } finally {
-      setTitlesBatchRunning(false);
     }
   }
 
@@ -587,6 +699,59 @@ export default function ProjectDashboard() {
 
   async function startBatchExtractCodex() {
     await openBatchExtractCodexModal();
+  }
+
+  async function runMineAll({
+    mode,
+    autoApply,
+  }: {
+    mode: MineAllMode;
+    autoApply: boolean;
+  }) {
+    const modeLabel =
+      mode === "missing_outlines"
+        ? "missing outlines"
+        : mode === "missing_briefs"
+          ? "missing chapter briefs"
+          : "everything";
+    const ok = await confirm({
+      title: "Run Mine All?",
+      message:
+        `Mine ${modeLabel} for this project in the background. `
+        + `${autoApply ? "Auto-accept is on, so generated reviewable changes may be applied and queued for review." : "Generated changes stay in Reviewable Changes until you apply them."} `
+        + "Cancel anytime from System Settings → LLM queue.",
+      confirmLabel: "Run Mine All",
+    });
+    if (!ok) return;
+
+    setMineAllOpen(false);
+    try {
+      const result = await api.mineAll(id, { mode, auto_apply: autoApply });
+      if ("job_id" in result) {
+        toast("Mine All started — running in background…", "success");
+        watchBackgroundJob(result.job_id, {
+          kind: "mine-all",
+          projectId: id,
+          label: "Mine All",
+          successMessage: autoApply
+            ? "Mine All complete — review auto-applied changes"
+            : "Mine All complete — review generated changes",
+          onSuccess: () => {
+            load();
+            window.dispatchEvent(new Event("novel-os:preview-pending"));
+            window.dispatchEvent(new Event("novel-os:mine-preview-pending"));
+          },
+        });
+      } else {
+        toast(result.message || "Mine All finished — review generated changes", "success");
+        load();
+        setCodexTab("review");
+        window.dispatchEvent(new Event("novel-os:preview-pending"));
+        window.dispatchEvent(new Event("novel-os:mine-preview-pending"));
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "error");
+    }
   }
 
   async function validateChapterStructure() {
@@ -907,7 +1072,7 @@ export default function ProjectDashboard() {
                   <button
                     type="button"
                     onClick={() => void startBatchExtractOutlines()}
-                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning}
+                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning || mineAllRunning}
                     className={TOOLBAR_CHIP}
                   >
                     {batchOutlinesRunning ? "Extracting outlines…" : "Extract all outlines"}
@@ -917,7 +1082,7 @@ export default function ProjectDashboard() {
                   <button
                     type="button"
                     onClick={() => void startBatchExtractCodex()}
-                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning}
+                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning || mineAllRunning}
                     className={TOOLBAR_CHIP}
                   >
                     {batchCodexRunning ? "Extracting codex…" : "Extract all codex"}
@@ -927,7 +1092,7 @@ export default function ProjectDashboard() {
                   <button
                     type="button"
                     onClick={() => void startBatchPopulateBriefs()}
-                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning}
+                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning || mineAllRunning}
                     className={TOOLBAR_CHIP}
                   >
                     {briefsBatchRunning ? "Populating briefs…" : "Populate all chapter briefs"}
@@ -937,10 +1102,20 @@ export default function ProjectDashboard() {
                   <button
                     type="button"
                     onClick={() => void startBatchAutoTitle()}
-                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning}
+                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning || mineAllRunning}
                     className={TOOLBAR_CHIP}
                   >
                     {titlesBatchRunning ? "Auto-titling…" : "Auto-title chapters"}
+                  </button>
+                </ToolTip>
+                <ToolTip id="dashboard.mineAll">
+                  <button
+                    type="button"
+                    onClick={() => setMineAllOpen(true)}
+                    disabled={batchOutlinesRunning || batchCodexRunning || briefsBatchRunning || titlesBatchRunning || mineAllRunning}
+                    className="inline-flex items-center rounded-md border border-amber/40 bg-amber/5 px-2.5 py-1 text-[12px] font-medium text-ink-text transition-colors hover:bg-amber/10 disabled:opacity-40"
+                  >
+                    {mineAllRunning ? "Mining all…" : "Mine All…"}
                   </button>
                 </ToolTip>
               </div>
@@ -1076,6 +1251,7 @@ export default function ProjectDashboard() {
           ["relationships", "Relationships"],
           ["family", "Family Tree"],
           ["storygraph", "Story Graph"],
+          ["review", "Review"],
           ["blueprint", "Blueprint"],
           ["timeline", "Timeline"],
           ["research", "Research Board"],
@@ -1278,7 +1454,7 @@ export default function ProjectDashboard() {
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {characters.map((ch) => (
-            <button key={ch.id} type="button" onClick={() => setEditCharId(ch.id)}
+            <button key={ch.id} type="button" onClick={() => { setEditCharInitialFocus(null); setEditCharId(ch.id); }}
                     className="group relative flex items-center gap-3 rounded-xl border border-paper-line bg-paper-card p-4 text-left shadow-[var(--shadow-paper)] transition-colors hover:border-amber/40">
               <DeleteButton
                 label={`Delete ${ch.full_name}`}
@@ -1329,6 +1505,7 @@ export default function ProjectDashboard() {
         projectId={id}
         characters={characters}
         onSelectCharacter={(charId) => {
+          setEditCharInitialFocus("notes");
           setEditCharId(charId);
         }}
       />
@@ -1349,6 +1526,7 @@ export default function ProjectDashboard() {
         projectId={id}
         characters={characters}
         onSelectCharacter={(charId) => {
+          setEditCharInitialFocus("notes");
           setEditCharId(charId);
         }}
       />
@@ -1388,6 +1566,10 @@ export default function ProjectDashboard() {
         chapters={chapters}
       />
       </>
+      )}
+
+      {codexTab === "review" && (
+        <ReviewableChangesInbox projectId={id} />
       )}
 
       {codexTab === "blueprint" && (
@@ -1535,9 +1717,10 @@ export default function ProjectDashboard() {
       <PasteChapterModal projectId={id} open={pasteOpen} onClose={() => setPasteOpen(false)}
                          onDone={load} defaultNumber={nextChapter} />
       <QuickAddCharacterModal projectId={id} open={charOpen} onClose={() => setCharOpen(false)}
-                              onAdded={(c) => { load(); setEditCharId(c.id); }} />
+                              onAdded={(c) => { load(); setEditCharInitialFocus(null); setEditCharId(c.id); }} />
       <CharacterEditorModal projectId={id} characterId={editCharId} open={editCharId != null}
-                            onClose={() => setEditCharId(null)} onSaved={load} />
+                            initialFocus={editCharInitialFocus}
+                            onClose={() => { setEditCharId(null); setEditCharInitialFocus(null); }} onSaved={load} />
       <PlotThreadModal projectId={id} thread={plotModal === "new" ? null : plotModal}
                        open={plotModal != null} onClose={() => setPlotModal(null)} onSaved={load} />
       <TimelineEventModal
@@ -1584,6 +1767,12 @@ export default function ProjectDashboard() {
           onApplied={load}
         />
       )}
+      <MineAllModal
+        open={mineAllOpen}
+        running={mineAllRunning}
+        onClose={() => setMineAllOpen(false)}
+        onRun={(opts) => void runMineAll(opts)}
+      />
       <BatchExtractSettingsModal
         open={outlineBatchOpen}
         title="Extract chapter outlines"
@@ -1647,6 +1836,101 @@ export default function ProjectDashboard() {
   );
 }
 
+function MineAllModal({
+  open,
+  running,
+  onClose,
+  onRun,
+}: {
+  open: boolean;
+  running: boolean;
+  onClose: () => void;
+  onRun: (opts: { mode: MineAllMode; autoApply: boolean }) => void;
+}) {
+  const [mode, setMode] = useState<MineAllMode>("missing_outlines");
+  const [autoApply, setAutoApply] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setMode("missing_outlines");
+    setAutoApply(false);
+  }, [open]);
+
+  return (
+    <Modal open={open} onClose={running ? () => {} : onClose} title="Mine All" size="wide">
+      <div className="space-y-4">
+        <p className="text-[14px] leading-relaxed text-ink-muted">
+          Run the approved project-wide mining foundation. Results create reviewable changes unless you auto-accept,
+          in which case applied changes still return to the Review tab for follow-up.
+        </p>
+        <fieldset className="space-y-2">
+          <legend className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+            Mode
+          </legend>
+          {([
+            ["missing_outlines", "Missing outlines", "Generate reviewable outline work only where chapters are missing outlines."],
+            ["missing_briefs", "Missing chapter briefs", "Generate missing chapter-brief support without redoing existing briefs."],
+            ["everything", "Everything", "Run the full mining pass for outlines, briefs, and graph/codex suggestions."],
+          ] as const).map(([value, label, description]) => (
+            <label
+              key={value}
+              className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-paper-line px-3 py-2.5 hover:bg-ink/[0.02]"
+            >
+              <input
+                type="radio"
+                name="mine-all-mode"
+                className="mt-0.5"
+                checked={mode === value}
+                onChange={() => setMode(value)}
+              />
+              <span className="text-[13px] text-ink-text">
+                <span className="font-semibold">{label}</span>
+                <span className="block text-[12.5px] text-ink-muted">{description}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-paper-line px-3 py-2.5 hover:bg-ink/[0.02]">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={autoApply}
+            onChange={(event) => setAutoApply(event.target.checked)}
+          />
+          <span className="text-[13px] text-ink-text">
+            <span className="font-semibold">Auto-accept</span>
+            <span className="block text-[12.5px] text-ink-muted">
+              Apply accepted suggestions immediately, then review applied changes from the Review tab.
+            </span>
+          </span>
+        </label>
+        <div className="flex flex-wrap justify-end gap-3">
+          <ToolTip id="modal.cancel">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={running}
+              className="rounded-lg px-4 py-2 text-[13.5px] font-semibold text-ink-muted transition-colors hover:bg-ink/5 disabled:opacity-40"
+            >
+              Cancel
+            </button>
+          </ToolTip>
+          <ToolTip id="dashboard.mineAll">
+            <button
+              type="button"
+              disabled={running}
+              onClick={() => onRun({ mode, autoApply })}
+              className="rounded-lg bg-ink px-5 py-2 text-[13.5px] font-semibold text-on-ink transition-colors hover:bg-ink-800 disabled:opacity-40"
+            >
+              {running ? "Running..." : "Run Mine All"}
+            </button>
+          </ToolTip>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function StoryStyleModal({
   projectId,
   project,
@@ -1655,7 +1939,7 @@ function StoryStyleModal({
   onSaved,
 }: {
   projectId: string;
-  project: ProjectDetail;
+  project: ProjectDetail | null;
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -1666,19 +1950,21 @@ function StoryStyleModal({
   const [tense, setTense] = useState("");
   const [proseStyle, setProseStyle] = useState("");
   const [vocabularyLevel, setVocabularyLevel] = useState("");
+  const [paragraphFormat, setParagraphFormat] = useState<ParagraphFormat>("block");
   const [chapterTargetWords, setChapterTargetWords] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setTone(project.style?.tone ?? "neutral");
-    setPointOfView(project.style?.point_of_view ?? "third_limited");
-    setTense(project.style?.tense ?? "past");
-    setProseStyle(project.style?.prose_style ?? "balanced");
-    setVocabularyLevel(project.style?.vocabulary_level ?? "moderate");
-    setChapterTargetWords(project.style?.chapter_target_words ?? "2500");
-    setDescription(project.style?.description ?? "");
+    setTone(project?.style?.tone ?? DEFAULT_PROJECT_STYLE.tone);
+    setPointOfView(project?.style?.point_of_view ?? DEFAULT_PROJECT_STYLE.point_of_view);
+    setTense(project?.style?.tense ?? DEFAULT_PROJECT_STYLE.tense);
+    setProseStyle(project?.style?.prose_style ?? DEFAULT_PROJECT_STYLE.prose_style);
+    setVocabularyLevel(project?.style?.vocabulary_level ?? DEFAULT_PROJECT_STYLE.vocabulary_level);
+    setParagraphFormat(project?.style?.paragraph_format === "indented" ? "indented" : DEFAULT_PROJECT_STYLE.paragraph_format);
+    setChapterTargetWords(project?.style?.chapter_target_words ?? String(DEFAULT_PROJECT_STYLE.chapter_target_words));
+    setDescription(project?.style?.description ?? DEFAULT_PROJECT_STYLE.description);
   }, [open, project]);
 
   async function save() {
@@ -1690,6 +1976,7 @@ function StoryStyleModal({
         tense,
         prose_style: proseStyle,
         vocabulary_level: vocabularyLevel,
+        paragraph_format: paragraphFormat,
         chapter_target_words: chapterTargetWords,
         description,
       });
@@ -1707,8 +1994,8 @@ function StoryStyleModal({
     <Modal open={open} onClose={busy ? () => {} : onClose} title="Chapter style defaults" size="wide">
       <div className="space-y-4">
         <p className="rounded-lg border border-amber/25 bg-amber/5 px-4 py-2.5 text-[12.5px] leading-relaxed text-ink-muted">
-          Default tone, POV, tense, prose, and chapter length for every chapter brief. Each chapter
-          inherits these until you override that field on the chapter page.
+          Default tone, POV, tense, prose, manuscript paragraph display, and chapter length.
+          Chapter briefs inherit voice fields until overridden; paragraph display affects preview and EPUB export only.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Tone default">
@@ -1738,6 +2025,16 @@ function StoryStyleModal({
           </Field>
           <Field label="Vocabulary default">
             <input className={fieldClass} value={vocabularyLevel} onChange={(e) => setVocabularyLevel(e.target.value)} placeholder="simple, moderate, literary..." />
+          </Field>
+          <Field label="Paragraph format">
+            <select
+              className={fieldClass}
+              value={paragraphFormat}
+              onChange={(e) => setParagraphFormat(e.target.value as ParagraphFormat)}
+            >
+              <option value="block">Block paragraphs</option>
+              <option value="indented">First-line indents</option>
+            </select>
           </Field>
           <Field label="Target length default">
             <TargetLengthInput

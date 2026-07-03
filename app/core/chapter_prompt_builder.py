@@ -14,6 +14,7 @@ def build_scribe_context_block(
     *,
     hint_text: str = "",
     outline_text: Optional[str] = None,
+    budget=None,
 ) -> str:
     """Brief (canonical POV) + writing style + plot + stripped beat sheet."""
     from prompt_context import build_chapter_context_block  # noqa: WPS433
@@ -23,4 +24,5 @@ def build_scribe_context_block(
         chapter,
         hint_text=hint_text,
         outline_text=outline_text,
+        budget=budget,
     )

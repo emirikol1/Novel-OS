@@ -454,7 +454,7 @@ def test_chapter_context_preview_post_uses_brief_body(tmp_path):
     assert body["mode"] == "outline"
     assert body["graph"]["items"] == []
     assert body["active_characters"] == [{"id": "char_a", "name": "Alice"}]
-    assert body["mentioned_characters"] == [{"id": "char_a", "name": "Alice"}]
+    assert body["mentioned_characters"] == []
     assert len(body["beats"]) == 1
     assert body["beats"][0]["title"] == "Vault alarm fails"
 

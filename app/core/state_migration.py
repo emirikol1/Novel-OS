@@ -81,15 +81,11 @@ def _step_backfill_node_lifespan(state: "StoryState", target_version: int) -> bo
 
 
 def _step_sync_brief_mentioned_characters(state: "StoryState", target_version: int) -> bool:
-    """Step 4: mentioned <- active when empty; enforce active ⊆ mentioned."""
+    """Step 4: normalize brief cast state lists."""
     changed = False
     for brief in state.chapter_briefs.values():
         before_mentioned = list(brief.mentioned_character_ids or [])
         before_active = list(brief.active_character_ids or [])
-        if not brief.mentioned_character_ids and brief.active_character_ids:
-            brief.mentioned_character_ids = [
-                cid for cid in brief.active_character_ids if (cid or "").strip()
-            ]
         normalize_brief_characters(brief)
         if (
             brief.mentioned_character_ids != before_mentioned

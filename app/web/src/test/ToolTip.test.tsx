@@ -154,3 +154,59 @@ test("tooltip dock stays open while pointer moves from trigger to dock", async (
   await vi.advanceTimersByTimeAsync(DISMISS_DELAY_MS);
   expect(screen.getByRole("tooltip")).toBeInTheDocument();
 });
+
+test("shared tooltip ids only dismiss from the active trigger", async () => {
+  renderWithTooltips(
+    <div>
+      <ToolTip id="chapter.revise">
+        <button type="button">Revise A</button>
+      </ToolTip>
+      <ToolTip id="chapter.revise">
+        <button type="button">Revise B</button>
+      </ToolTip>
+    </div>,
+  );
+
+  const activeButton = screen.getByRole("button", { name: "Revise A" });
+  const inactiveButton = screen.getByRole("button", { name: "Revise B" });
+  fireEvent.mouseEnter(activeButton);
+  await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS);
+
+  await waitFor(() => {
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+  });
+  expect(activeButton).toHaveAttribute("aria-describedby");
+  expect(inactiveButton).not.toHaveAttribute("aria-describedby");
+
+  fireEvent.mouseLeave(inactiveButton);
+  await vi.advanceTimersByTimeAsync(DISMISS_DELAY_MS);
+  expect(screen.getByRole("tooltip")).toBeInTheDocument();
+});
+
+test("clears tooltip when active trigger unmounts", async () => {
+  function Fixture({ show }: { show: boolean }) {
+    return (
+      <ToolTipProvider>
+        {show && (
+          <ToolTip id="chapter.revise">
+            <button type="button">Revise</button>
+          </ToolTip>
+        )}
+        <ToolTipDock />
+      </ToolTipProvider>
+    );
+  }
+
+  const { rerender } = render(<Fixture show />);
+  fireEvent.mouseEnter(screen.getByRole("button", { name: "Revise" }));
+  await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS);
+
+  await waitFor(() => {
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+  });
+
+  rerender(<Fixture show={false} />);
+  await waitFor(() => {
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+});

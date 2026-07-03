@@ -5,7 +5,7 @@ import type {
   StoryGraphNodeSummary,
 } from "../api/client";
 import { actSplitIndices } from "./blueprintCanvas";
-import { kindLabel, nodeDisplayEdges } from "./storyGraph";
+import { isChapterBeatGraphNodeId, kindLabel, nodeDisplayEdges } from "./storyGraph";
 
 export const FLOW_NODE_WIDTH = 168;
 export const FLOW_NODE_HEIGHT = 56;
@@ -531,6 +531,7 @@ export function toFlowNodes(
     id: node.id,
     type: "storyGraphNode",
     position: positions.get(node.id) ?? { x: 0, y: 0 },
+    draggable: !isChapterBeatGraphNodeId(node.id),
     data: {
       node,
       charNames: options.charNames,

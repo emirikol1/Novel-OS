@@ -16,8 +16,8 @@ from prompt_context import (  # noqa: E402
     strip_outline_brief_duplicate_sections,
     strip_outline_pov_metadata,
 )
-from state_manager import Character, StoryState, initialize_project  # noqa: E402
-from story_graph import ChapterBrief, format_chapter_brief_prompt_context  # noqa: E402
+from state_manager import Character, PlotThread, StoryState, initialize_project  # noqa: E402
+from story_graph import ChapterBeat, ChapterBrief, StoryGraphNode, format_chapter_brief_prompt_context  # noqa: E402
 
 
 def _project(tmp_path):
@@ -217,6 +217,96 @@ def test_build_chapter_context_uses_chapter_beats(tmp_path):
     outline = "## Beats\n1. Outline beat only.\n"
     block = build_chapter_context_block(state, chapter, outline_text=outline)
     assert "**Chapter Beats** in the chapter brief take precedence" in block
+
+
+def test_build_chapter_context_graph_focus_suppresses_legacy_plots(tmp_path):
+    _, state = _project(tmp_path)
+    chapter = state.get_chapter(1)
+    assert chapter is not None
+    state.add_plot_thread(
+        PlotThread(
+            id="plot_legacy",
+            name="Legacy Active Thread",
+            description="Old broad plot context",
+            thread_type="main",
+            status="active",
+        ),
+    )
+    state.story_graph_nodes["node_current"] = StoryGraphNode(
+        id="node_current",
+        kind="plot_thread",
+        title="Current Graph Focus",
+        description="Use this graph node",
+        priority=5,
+    )
+    state.set_chapter_brief(ChapterBrief(chapter_number=1, active_node_ids=["node_current"]))
+
+    block = build_chapter_context_block(state, chapter)
+
+    assert "Current Graph Focus" in block
+    assert "Legacy Active Thread" not in block
+
+
+def test_build_chapter_context_legacy_plots_fallback_without_graph_focus(tmp_path):
+    _, state = _project(tmp_path)
+    chapter = state.get_chapter(1)
+    assert chapter is not None
+    state.add_plot_thread(
+        PlotThread(
+            id="plot_legacy",
+            name="Legacy Active Thread",
+            description="Fallback plot context",
+            thread_type="main",
+            status="active",
+        ),
+    )
+    state.set_chapter_brief(ChapterBrief(chapter_number=1))
+
+    block = build_chapter_context_block(state, chapter)
+
+    assert "Legacy Active Thread" in block
+
+
+def test_build_chapter_context_recent_facts_require_current_graph_link(tmp_path):
+    _, state = _project(tmp_path)
+    state.create_chapter(2)
+    chapter = state.get_chapter(2)
+    assert chapter is not None
+    state.story_graph_nodes["node_current"] = StoryGraphNode(
+        id="node_current",
+        kind="plot_thread",
+        title="Current Graph Focus",
+        priority=5,
+    )
+    state.story_graph_nodes["node_other"] = StoryGraphNode(
+        id="node_other",
+        kind="plot_thread",
+        title="Unrelated Graph Focus",
+        priority=5,
+    )
+    state.set_chapter_beats(
+        1,
+        [
+            ChapterBeat(
+                id="beat_1_001",
+                title="Related landed fact",
+                status="landed",
+                linked_node_ids=["node_current"],
+            ),
+            ChapterBeat(
+                id="beat_1_002",
+                title="Unrelated landed fact",
+                status="landed",
+                linked_node_ids=["node_other"],
+            ),
+        ],
+    )
+    state.set_chapter_brief(ChapterBrief(chapter_number=2, active_node_ids=["node_current"]))
+
+    block = build_chapter_context_block(state, chapter)
+
+    assert "Related landed fact" in block
+    assert "Unrelated landed fact" not in block
 
 
 def test_normalize_brief_target_for_storage_clears_project_default(tmp_path):

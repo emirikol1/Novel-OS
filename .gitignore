@@ -10,6 +10,10 @@ venv/
 .env
 .env.local
 .env.*.local
+LOCAL_ONLY
+LOCAL_ONLY_LLM
+.localonly
+.local-only
 config/app_config.json
 config/global_system_prefix.md
 

@@ -1,7 +1,8 @@
+import { useEffect, useState } from "react";
 import type { StoryGraphEdgeSummary, StoryGraphNodeSummary } from "../../api/client";
 import DeleteButton from "../DeleteButton";
 import ToolTip from "../ToolTip";
-import { kindLabel } from "../../lib/storyGraph";
+import { isChapterBeatGraphEdgeId, isChapterBeatGraphNodeId, kindLabel } from "../../lib/storyGraph";
 
 const KIND_BADGE: Record<string, string> = {
   main: "bg-st-approved/15 text-st-approved",
@@ -24,6 +25,7 @@ export default function GraphInspector({
   edges,
   nodesMap,
   onEdit,
+  onSaveNotes,
   onDelete,
   onDeleteEdge,
 }: {
@@ -32,9 +34,18 @@ export default function GraphInspector({
   edges: StoryGraphEdgeSummary[];
   nodesMap: Map<string, StoryGraphNodeSummary>;
   onEdit: () => void;
+  onSaveNotes: (notes: string) => Promise<void> | void;
   onDelete: () => void;
   onDeleteEdge: (edgeId: string) => void;
 }) {
+  const [notes, setNotes] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
+
+  useEffect(() => {
+    setNotes(node?.description ?? "");
+    setSavingNotes(false);
+  }, [node?.id, node?.description]);
+
   if (!node) {
     return (
       <p className="text-[13px] text-ink-muted">
@@ -46,6 +57,18 @@ export default function GraphInspector({
   const nodeEdges = edges.filter(
     (e) => e.source_id === node.id || e.target_id === node.id,
   );
+  const editable = !isChapterBeatGraphNodeId(node.id);
+  const notesDirty = notes !== (node.description ?? "");
+
+  async function saveNotes() {
+    if (!editable || !notesDirty) return;
+    setSavingNotes(true);
+    try {
+      await onSaveNotes(notes);
+    } finally {
+      setSavingNotes(false);
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -108,6 +131,37 @@ export default function GraphInspector({
           </div>
         )}
       </dl>
+      <div className="rounded-lg border border-paper-line bg-paper px-2.5 py-2">
+        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+          {editable ? "Node notes" : "Beat notes"}
+        </label>
+        <textarea
+          className="min-h-[92px] w-full resize-y rounded-md border border-paper-line bg-paper-card px-2 py-1.5 text-[12.5px] leading-relaxed text-ink-text placeholder:text-ink-muted disabled:opacity-70"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder="Capture author-facing notes for this node..."
+          disabled={!editable || savingNotes}
+        />
+        {editable ? (
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-ink-muted">
+              Notes save to this graph node&apos;s description.
+            </span>
+            <button
+              type="button"
+              onClick={() => void saveNotes()}
+              disabled={!notesDirty || savingNotes}
+              className="rounded-lg border border-paper-line px-2.5 py-1 text-[11.5px] font-semibold text-ink-text hover:bg-ink/5 disabled:opacity-40"
+            >
+              {savingNotes ? "Saving..." : "Save notes"}
+            </button>
+          </div>
+        ) : (
+          <p className="mt-1 text-[11px] text-ink-muted">
+            Chapter beat rows are edited from their chapter brief.
+          </p>
+        )}
+      </div>
       {nodeEdges.length > 0 && (
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">Connections</p>
@@ -116,44 +170,49 @@ export default function GraphInspector({
               const otherId = e.source_id === node.id ? e.target_id : e.source_id;
               const other = nodesMap.get(otherId);
               const dir = e.source_id === node.id ? "→" : "←";
+              const derivedBeatEdge = isChapterBeatGraphEdgeId(e.id);
               return (
                 <li key={e.id} className="flex items-center justify-between gap-2 text-[12px]">
                   <span className="truncate text-ink-text">
                     {dir} {other?.title ?? otherId}
                     {e.label ? ` (${e.label})` : ` · ${e.kind}`}
                   </span>
-                  <ToolTip id="graph.inspectorDeleteEdge">
-                    <button
-                      type="button"
-                      onClick={() => onDeleteEdge(e.id)}
-                      className="shrink-0 text-[11px] text-ink-muted hover:text-red-600"
-                    >
-                      ×
-                    </button>
-                  </ToolTip>
+                  {!derivedBeatEdge && (
+                    <ToolTip id="graph.inspectorDeleteEdge">
+                      <button
+                        type="button"
+                        onClick={() => onDeleteEdge(e.id)}
+                        className="shrink-0 text-[11px] text-ink-muted hover:text-red-600"
+                      >
+                        ×
+                      </button>
+                    </ToolTip>
+                  )}
                 </li>
               );
             })}
           </ul>
         </div>
       )}
-      <div className="flex gap-2 pt-1">
-        <ToolTip id="graph.inspectorEdit">
-          <button
-            type="button"
-            onClick={onEdit}
-            className="rounded-lg border border-paper-line px-3 py-1.5 text-[12px] font-semibold text-ink-text hover:bg-ink/5"
-          >
-            Edit
-          </button>
-        </ToolTip>
-        <DeleteButton
-          label="Delete node"
-          message={`Delete graph node "${node.title}"? Connected edges will also be removed.`}
-          onConfirm={onDelete}
-          tipId="graph.inspectorDeleteNode"
-        />
-      </div>
+      {editable && (
+        <div className="flex gap-2 pt-1">
+          <ToolTip id="graph.inspectorEdit">
+            <button
+              type="button"
+              onClick={onEdit}
+              className="rounded-lg border border-paper-line px-3 py-1.5 text-[12px] font-semibold text-ink-text hover:bg-ink/5"
+            >
+              Edit all fields
+            </button>
+          </ToolTip>
+          <DeleteButton
+            label="Delete node"
+            message={`Delete graph node "${node.title}"? Connected edges will also be removed.`}
+            onConfirm={onDelete}
+            tipId="graph.inspectorDeleteNode"
+          />
+        </div>
+      )}
     </div>
   );
 }

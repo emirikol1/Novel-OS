@@ -126,6 +126,15 @@ def test_conservative_last_appearance_suggestion(project):
     assert s.explicit_presence is True
 
 
+def test_conservative_last_appearance_suggestion_uses_alias_presence(project):
+    _, state = project
+    text = "[[char:Lena]] reaches the market gate."
+    bundle = suggest_conservative_updates(state, 4, text, source="revised")
+
+    assert len(bundle.suggestions) == 1
+    assert bundle.suggestions[0].character_id == "char_001"
+
+
 def test_no_last_appearance_for_bare_mention(project):
     _, state = project
     text = "They whispered about [[char:Lena Voss]] in the tavern."

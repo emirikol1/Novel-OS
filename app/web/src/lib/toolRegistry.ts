@@ -58,6 +58,9 @@ export type ToolTipId =
   | "dashboard.batchExtractCodex"
   | "dashboard.populateChapterBriefs"
   | "dashboard.autoTitleChapters"
+  | "dashboard.mineAll"
+  | "dashboard.tabReviewableChanges"
+  | "dashboard.reviewGraphSuggestions"
   | "dashboard.nextAction"
   | "chapter.generateDraft"
   | "chapter.revise"
@@ -71,6 +74,7 @@ export type ToolTipId =
   | "chapter.redraftModePreserve"
   | "chapter.expandPlaceholders"
   | "chapter.formatParagraphs"
+  | "chapter.checkDialogueQuotes"
   | "chapter.alignBoundary"
   | "chapter.outlineFromNotes"
   | "chapter.outlineFromText"
@@ -610,6 +614,27 @@ export const TOOL_REGISTRY: Record<ToolTipId, ToolTipEntry> = {
     modifies: "Chapter title and title_source in story state.",
     workflow: "After import — choose All eligible or All auto-titles, then confirm before running.",
   },
+  "dashboard.mineAll": {
+    label: "Mine All",
+    function: "Runs the project-wide reviewable-changes mining foundation for missing outlines, missing briefs, or all supported suggestions.",
+    worksOn: "Project chapters and structured planning data.",
+    modifies: "Creates reviewable changes; auto-accept can apply suggestions that still need Review tab confirmation.",
+    workflow: "Use after import or major drafting passes, then triage generated changes in Review.",
+  },
+  "dashboard.tabReviewableChanges": {
+    label: "Review",
+    function: "Opens the central inbox for pending, applied, reviewed, dismissed, reverted, and blocked AI-suggested changes.",
+    worksOn: "Reviewable changes created by mining and graph suggestion jobs.",
+    modifies: "Navigation only until you apply, dismiss, mark reviewed, or revert a change.",
+    workflow: "Review before trusting generated graph, codex, outline, or brief updates as project memory.",
+  },
+  "dashboard.reviewGraphSuggestions": {
+    label: "Generate graph suggestions",
+    function: "Creates reviewable Story Graph suggestions from mined or inferred project structure.",
+    worksOn: "Project graph and reviewable-change queue.",
+    modifies: "Adds pending suggestions, or auto-applies them as applied-needs-review when enabled.",
+    workflow: "Generate, inspect before/after fields, apply or mark reviewed from the Review tab.",
+  },
   "dashboard.nextAction": {
     label: "Next action",
     function: "Suggests the highest-priority chapter and action from pipeline state.",
@@ -714,6 +739,16 @@ export const TOOL_REGISTRY: Record<ToolTipId, ToolTipEntry> = {
     detail:
       "Never fixes spelling or modernizes language. Scene breaks appear as a standalone line with three periods. "
       + "Validation blocks keep if the model changed any characters.",
+  },
+  "chapter.checkDialogueQuotes": {
+    label: "Check dialogue quotes",
+    function: "Checks dialogue quotation marks and broken source line-wrap hyphenation.",
+    worksOn: "Draft, Revised, or Final prose for the active stage.",
+    modifies: "Preview until kept — only double quotation marks, broken line-wrap hyphens, and related whitespace are allowed.",
+    workflow: "Run near AI Paragraphs after imports or chapter splits, then review preview and keep or discard.",
+    detail:
+      "The model is told chapter edges may be cut off and must not complete fragments. "
+      + "Validation blocks keep if words, normal hyphens, or non-quote punctuation changed.",
   },
   "chapter.alignBoundary": {
     label: "Fix chapter alignment",

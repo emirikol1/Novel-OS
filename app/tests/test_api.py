@@ -46,6 +46,31 @@ def test_project_detail_includes_storage_paths(projects_root):
     assert data["project_path"] == str(root)
     assert data["story_state_path"] == str(root / "outputs" / "state" / "story_state.json")
     assert data["manuscript_path"] == str(root / "outputs" / "manuscript")
+    assert data["style"]["paragraph_format"] == "block"
+
+
+def test_update_project_style_saves_paragraph_format(projects_root):
+    c = _client(projects_root)
+    resp = c.patch(
+        "/api/projects/the-last-signal/style",
+        json={"paragraph_format": "indented"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["style"]["paragraph_format"] == "indented"
+
+    state_path = projects_root / "the-last-signal" / "outputs" / "state" / "story_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["style_profile"]["paragraph_format"] == "indented"
+
+
+def test_update_project_style_rejects_unknown_paragraph_format(projects_root):
+    c = _client(projects_root)
+    resp = c.patch(
+        "/api/projects/the-last-signal/style",
+        json={"paragraph_format": "hanging"},
+    )
+    assert resp.status_code == 400
+    assert "paragraph_format" in resp.json()["detail"]
 
 
 def test_system_prompt_settings(tmp_path, monkeypatch):
@@ -78,6 +103,59 @@ def test_agent_prompt_settings(tmp_path, monkeypatch):
         json={"selected_variant": "broken", "custom_prompt": ""},
     )
     assert bad.status_code == 400
+
+
+def test_llm_connection_settings_local_only_policy(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOVEL_OS_HOME", str(tmp_path))
+    (tmp_path / "LOCAL_ONLY").write_text("", encoding="utf-8")
+    c = TestClient(create_app())
+
+    listing = c.get("/api/settings/llm-connection")
+    assert listing.status_code == 200
+    body = listing.json()
+    assert body["local_only"] is True
+    assert {p["key"] for p in body["allowed_providers"]} == {
+        "lmstudio",
+        "ollama",
+        "openai_compatible",
+    }
+    assert "api_key" not in body
+
+    blocked = c.put(
+        "/api/settings/llm-connection",
+        json={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "secret",
+        },
+    )
+    assert blocked.status_code == 400
+
+
+def test_llm_connection_profiles_are_masked_in_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOVEL_OS_HOME", str(tmp_path))
+    c = TestClient(create_app())
+
+    saved = c.put(
+        "/api/settings/llm-connection",
+        json={
+            "provider": "lmstudio",
+            "model": "local-model",
+            "base_url": "http://127.0.0.1:1234/v1",
+            "api_key": "secret",
+            "profile_name": "Local profile",
+            "save_profile": True,
+        },
+    )
+
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["api_key_set"] is True
+    assert body["active_profile_id"]
+    assert "api_key" not in body
+    assert body["profiles"][0]["api_key_set"] is True
+    assert "api_key" not in body["profiles"][0]
 
 
 def test_llm_queue_settings_and_flush(tmp_path, monkeypatch):
@@ -223,6 +301,67 @@ def test_characters_endpoint(tmp_path):
     sf.write_text(json.dumps(data), encoding="utf-8")
     rows = _client(tmp_path).get("/api/projects/p/characters").json()
     assert rows[0]["full_name"] == "Lena"
+
+
+def test_character_detail_includes_chapter_references_from_briefs(tmp_path):
+    _seed_project(
+        tmp_path,
+        "p",
+        "P",
+        "Drama",
+        chapters={
+            "1": {"number": 1, "title": "Opening", "status": "drafted", "word_count": 100},
+            "2": {"number": 2, "title": "Echo", "status": "drafted", "word_count": 100},
+            "3": {"number": 3, "title": "Aftermath", "status": "drafted", "word_count": 100},
+        },
+    )
+    sf = tmp_path / "p" / "outputs" / "state" / "story_state.json"
+    data = json.loads(sf.read_text())
+    data["characters"] = {
+        "char_lena": {"id": "char_lena", "full_name": "Lena", "role": "protagonist"},
+    }
+    data["chapter_briefs"] = {
+        "1": {
+            "chapter_number": 1,
+            "pov_character_id": "char_lena",
+            "active_character_ids": [],
+            "mentioned_character_ids": [],
+        },
+        "2": {
+            "chapter_number": 2,
+            "active_character_ids": [],
+            "mentioned_character_ids": ["char_lena"],
+        },
+        "3": {
+            "chapter_number": 3,
+            "active_character_ids": ["char_lena"],
+            "mentioned_character_ids": ["char_lena"],
+        },
+    }
+    sf.write_text(json.dumps(data), encoding="utf-8")
+
+    detail = _client(tmp_path).get("/api/projects/p/characters/char_lena").json()
+
+    assert detail["chapter_references"] == [
+        {
+            "chapter_number": 1,
+            "chapter_title": "Opening",
+            "present": True,
+            "mentioned": False,
+        },
+        {
+            "chapter_number": 2,
+            "chapter_title": "Echo",
+            "present": False,
+            "mentioned": True,
+        },
+        {
+            "chapter_number": 3,
+            "chapter_title": "Aftermath",
+            "present": True,
+            "mentioned": False,
+        },
+    ]
 
 
 # --- M2: chapter stages + editable Final -------------------------------------
@@ -418,8 +557,8 @@ def test_create_project_then_lists(tmp_path):
     brief = c.get("/api/projects/the-drowned-city/chapters/1/brief").json()
     assert brief["pov_character_id"] == chars[0]["id"]
     assert brief["active_node_ids"] == [nodes[0]["id"]]
-    assert brief["mentioned_character_ids"]
-    assert set(brief["active_character_ids"]) <= set(brief["mentioned_character_ids"])
+    assert brief["active_character_ids"]
+    assert not (set(brief["active_character_ids"]) & set(brief["mentioned_character_ids"]))
 
 
 def test_create_project_seeded_brief_v2_fields(tmp_path):
@@ -429,8 +568,8 @@ def test_create_project_seeded_brief_v2_fields(tmp_path):
     project_id = resp.json()["id"]
 
     brief = c.get(f"/api/projects/{project_id}/chapters/1/brief").json()
-    assert brief["mentioned_character_ids"]
     assert brief["active_character_ids"]
+    assert not (set(brief["active_character_ids"]) & set(brief["mentioned_character_ids"]))
     assert brief["active_node_ids"]
 
     beats = c.get(f"/api/projects/{project_id}/chapters/1/beats").json()

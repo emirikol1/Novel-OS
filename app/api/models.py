@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProjectSummary(BaseModel):
@@ -44,6 +44,13 @@ class CharacterSummary(BaseModel):
     role: str
     aliases: list[str] = []
     portrait_url: str | None = None
+
+
+class CharacterChapterReference(BaseModel):
+    chapter_number: int
+    chapter_title: str = ""
+    present: bool = False
+    mentioned: bool = False
 
 
 class PlotThreadSummary(BaseModel):
@@ -170,6 +177,7 @@ class UpdateStyleProfile(BaseModel):
     prose_style: str | None = None
     vocabulary_level: str | None = None
     description: str | None = None
+    paragraph_format: str | None = None
 
 
 class PlanOutlinePreviewRequest(BaseModel):
@@ -208,6 +216,58 @@ class UpdateAgentPromptSetting(BaseModel):
     custom_prompt: str = ""
 
 
+class LlmProviderOption(BaseModel):
+    key: str
+    label: str
+    local: bool = True
+    default_base_url: str = ""
+    default_model: str = ""
+    api_key_required: bool = False
+
+
+class LlmProfile(BaseModel):
+    id: str
+    name: str
+    provider: str = "lmstudio"
+    model: str = ""
+    base_url: str = ""
+    api_key_set: bool = False
+
+
+class LlmConnectionSettings(BaseModel):
+    provider: str = "lmstudio"
+    model: str = ""
+    base_url: str = ""
+    api_key_set: bool = False
+    local_only: bool = True
+    allowed_providers: list[LlmProviderOption] = []
+    active_profile_id: str = ""
+    profiles: list[LlmProfile] = []
+
+
+class UpdateLlmConnectionSettings(BaseModel):
+    provider: str = "lmstudio"
+    model: str = ""
+    base_url: str = ""
+    api_key: str | None = None
+    profile_id: str | None = None
+    profile_name: str = ""
+    save_profile: bool = False
+
+
+class LlmConnectionTestResult(BaseModel):
+    ok: bool
+    message: str
+    provider: str = ""
+    model: str = ""
+    base_url: str = ""
+
+
+class LlmModelListResult(BaseModel):
+    models: list[str] = []
+    message: str = ""
+
+
 class LlmQueueEntry(BaseModel):
     id: str
     label: str
@@ -226,6 +286,19 @@ class LlmQueueMove(BaseModel):
     position: str  # first | last
 
 
+class JobProgress(BaseModel):
+    total: int = 0
+    completed: int = 0
+    skipped: int = 0
+    failed: int = 0
+    current: str = ""
+    unit: str = "item"
+    average_seconds: float | None = None
+    elapsed_seconds: float | None = None
+    remaining_seconds: float | None = None
+    updated_at: str | None = None
+
+
 class RunningJobEntry(BaseModel):
     job_id: str
     kind: str
@@ -236,6 +309,7 @@ class RunningJobEntry(BaseModel):
     screen: str = "App"
     batch_id: str | None = None
     batch_size: int = 1
+    progress: JobProgress | None = None
 
 
 class JobCancelResult(BaseModel):
@@ -492,6 +566,7 @@ class CharacterDetail(BaseModel):
     aliases: list[str] = []
     last_appearance_chapter: int = 0
     relationships: dict[str, str] = {}
+    chapter_references: list[CharacterChapterReference] = []
 
 
 class UpdateCharacter(BaseModel):
@@ -683,6 +758,49 @@ class StoryGraphMigrateResult(BaseModel):
     skipped: bool
 
 
+class ReviewableChangeModel(BaseModel):
+    id: str
+    kind: str
+    title: str
+    summary: str = ""
+    reason: str = ""
+    source: str = ""
+    status: str = "pending"
+    confidence: float = 1.0
+    created_at: str
+    updated_at: str
+    applied_at: str | None = None
+    reviewed_at: str | None = None
+    target: dict = {}
+    before: dict | None = None
+    after: dict | None = None
+    conflicts: list[str] = []
+    revert_available: bool = False
+
+
+class GenerateGraphSuggestionsRequest(BaseModel):
+    auto_apply: bool = False
+
+
+class GenerateGraphSuggestionsResult(BaseModel):
+    changes: list[ReviewableChangeModel]
+    generated: int
+    applied: int = 0
+
+
+class MineAllRequest(BaseModel):
+    mode: str
+    auto_apply: bool = False
+    chapters: list[int] | None = None
+
+
+class MineAllResult(BaseModel):
+    mode: str
+    status: str
+    message: str = ""
+    changes: list[ReviewableChangeModel] = []
+
+
 class PinStoryGraphNodeRequest(BaseModel):
     chapter_number: int
     pinned: bool = True
@@ -819,12 +937,15 @@ class ApplyChapterMinePreviewResult(BaseModel):
 
 class GenerateChapterBriefRequest(BaseModel):
     source: str = "best"
-    max_beats: int = 5
+    max_beats: int | None = None
+    beat_importance_threshold: int = Field(4, ge=0, le=5)
+    current_brief: SaveChapterBrief | None = None
 
 
 class GenerateChapterBriefsRequest(BaseModel):
     source: str = "best"
-    max_beats: int = 5
+    max_beats: int | None = None
+    beat_importance_threshold: int = Field(4, ge=0, le=5)
     overwrite_existing: bool = False
 
 
@@ -1030,6 +1151,7 @@ class RegeneratePreview(BaseModel):
     instructions: str = ""
     placeholder_count: int | None = None
     scene_break_count: int | None = None
+    quote_mark_count: int | None = None
 
 
 class RegenerateApply(BaseModel):

@@ -2,6 +2,10 @@
 .env
 .env.local
 .env.*.local
+LOCAL_ONLY
+LOCAL_ONLY_LLM
+.localonly
+.local-only
 
 # --- Python ---
 __pycache__/

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, List, Tuple
 
 from story_graph import ChapterBeat, ChapterBrief
@@ -80,9 +82,14 @@ def infer_cast_from_text(
     active_ids: List[str] = []
     for cid in mentioned_ids:
         char = state.characters.get(cid)
-        if char and _detect_explicit_presence(char.full_name, text or "", pov):
+        if not char:
+            continue
+        names = char.all_names() if hasattr(char, "all_names") else [char.full_name]
+        if _detect_explicit_presence(names, text or "", pov):
             active_ids.append(cid)
 
+    active_set = set(active_ids)
+    mentioned_ids = [cid for cid in mentioned_ids if cid not in active_set]
     return mentioned_ids, active_ids
 
 
@@ -254,9 +261,44 @@ def merge_cast_ids(existing: List[str], inferred: List[str]) -> List[str]:
 
 
 def _beat_key(text: str) -> str:
-    text = re.sub(r"\*\*", "", text or "").strip().lower()
+    text = re.sub(r"\*\*", "", text or "")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.strip().lower()
     text = re.sub(r"\s+", " ", text)
     return text.strip(" .!?:;—-")
+
+
+def _beat_keys_similar(left: str, right: str) -> bool:
+    left = _beat_key(left)
+    right = _beat_key(right)
+    if not left or not right:
+        return False
+    left_numbers = set(re.findall(r"\d+", left))
+    right_numbers = set(re.findall(r"\d+", right))
+    if left_numbers or right_numbers:
+        if left_numbers != right_numbers:
+            return False
+    if left == right:
+        return True
+    stopwords = {"a", "an", "the", "is", "are", "was", "were", "to", "of"}
+    left_core = " ".join(token for token in left.split() if token not in stopwords)
+    right_core = " ".join(token for token in right.split() if token not in stopwords)
+    if left_core and right_core and left_core == right_core:
+        return True
+    if min(len(left_core), len(right_core)) >= 20 and (left_core in right_core or right_core in left_core):
+        return True
+    return SequenceMatcher(None, left_core or left, right_core or right).ratio() >= 0.88
+
+
+def _append_unique_beat_title(titles: List[str], title: str) -> bool:
+    title = (title or "").strip()
+    if not title:
+        return False
+    if any(_beat_keys_similar(title, existing) for existing in titles):
+        return False
+    titles.append(title)
+    return True
 
 
 def _next_beat_id(chapter_number: int, known_ids: set[str]) -> str:
@@ -274,26 +316,20 @@ def merge_planned_beats(
     chapter_number: int,
     new_titles: List[str],
 ) -> List[ChapterBeat]:
-    """Merge generated planned beats without clobbering landed or hand-edited planned rows."""
+    """Merge imported planned beats without clobbering landed or hand-edited planned rows."""
     existing = list(state.get_chapter_beats(chapter_number))
     landed = [b for b in existing if (b.status or "").strip() == "landed"]
     planned = [b for b in existing if (b.status or "").strip() != "landed"]
     known_ids = {b.id for b in existing}
     incoming: List[str] = []
-    incoming_seen: set[str] = set()
     for title in new_titles:
         title = (title or "").strip()
-        key = _beat_key(title)
-        if not title or not key or key in incoming_seen:
-            continue
-        incoming.append(title)
-        incoming_seen.add(key)
+        _append_unique_beat_title(incoming, title)
     if planned:
-        known = {_beat_key(b.title or b.summary) for b in planned if _beat_key(b.title or b.summary)}
+        known_titles = [b.title or b.summary for b in planned if _beat_key(b.title or b.summary)]
         sort_order = max((b.sort_order for b in existing), default=-1) + 1
         for title in incoming:
-            key = _beat_key(title)
-            if key in known:
+            if any(_beat_keys_similar(title, known) for known in known_titles):
                 continue
             planned.append(
                 ChapterBeat(
@@ -304,9 +340,44 @@ def merge_planned_beats(
                     status="planned",
                 )
             )
-            known.add(key)
+            known_titles.append(title)
             sort_order += 1
         return sorted(landed + planned, key=lambda b: (b.sort_order, b.id))
+
+    beats = list(landed)
+    sort_order = max((b.sort_order for b in beats), default=-1) + 1
+    for title in incoming:
+        beats.append(
+            ChapterBeat(
+                id=_next_beat_id(chapter_number, known_ids),
+                title=title,
+                summary=title,
+                sort_order=sort_order,
+                status="planned",
+            )
+        )
+        sort_order += 1
+    return beats
+
+
+def replace_planned_beats(
+    state: "StoryState",
+    chapter_number: int,
+    new_titles: List[str],
+) -> List[ChapterBeat]:
+    """Replace scan-generated planned beats while preserving landed history."""
+    existing = list(state.get_chapter_beats(chapter_number))
+    landed = [b for b in existing if (b.status or "").strip() == "landed"]
+    known_ids = {b.id for b in existing}
+    incoming: List[str] = []
+    landed_titles = [b.title or b.summary for b in landed if _beat_key(b.title or b.summary)]
+    for title in new_titles:
+        title = (title or "").strip()
+        if not title:
+            continue
+        if any(_beat_keys_similar(title, landed_title) for landed_title in landed_titles):
+            continue
+        _append_unique_beat_title(incoming, title)
 
     beats = list(landed)
     sort_order = max((b.sort_order for b in beats), default=-1) + 1

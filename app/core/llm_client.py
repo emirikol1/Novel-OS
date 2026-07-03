@@ -1,9 +1,9 @@
 """
 Novel OS - Local-only LLM Client
 
-Calls exactly one endpoint: your configured local model server (LM Studio, Ollama,
-or another OpenAI-compatible server on localhost). No cloud providers, no Claude CLI,
-no auto-update checks, no telemetry.
+Calls your configured model endpoint. Local-only installs are enforced by a
+LOCAL_ONLY/.localonly sentinel in NOVEL_OS_HOME; published installs can expose
+cloud providers when that sentinel is absent.
 
 Configure via environment (or .env in project root):
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import socket
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse
@@ -81,7 +82,7 @@ def _port_open(host: str, port: int, timeout: float = 0.4) -> bool:
 
 
 class LLMClient:
-    """Local-only LLM client."""
+    """Configured LLM client with local-only policy enforcement."""
 
     def __init__(
         self,
@@ -91,6 +92,7 @@ class LLMClient:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
+        self._settings = self._settings_config()
         self.provider_name = (provider or self._resolve_provider()).lower()
         self.max_tokens = max_tokens or int(os.environ.get("NOVEL_OS_MAX_TOKENS", DEFAULT_MAX_TOKENS))
         self._explicit_base_url = base_url
@@ -98,10 +100,34 @@ class LLMClient:
         self._backend, self.model, self._base_url = self._build_backend(model)
 
     @staticmethod
+    def _settings_config() -> dict:
+        try:
+            from app_settings import llm_runtime_config  # noqa: WPS433
+
+            return llm_runtime_config()
+        except Exception:  # noqa: BLE001
+            return {}
+
+    @staticmethod
+    def _ensure_provider_allowed(provider: str) -> None:
+        try:
+            from app_settings import _validate_llm_provider  # noqa: WPS433
+
+            _validate_llm_provider(provider)
+        except ValueError as e:
+            raise LLMError(str(e)) from e
+
+    @staticmethod
     def _resolve_provider() -> str:
         env_pick = os.environ.get("NOVEL_OS_LLM_PROVIDER")
         if env_pick:
+            LLMClient._ensure_provider_allowed(env_pick)
             return env_pick
+        settings = LLMClient._settings_config()
+        if settings.get("provider"):
+            provider = str(settings["provider"])
+            LLMClient._ensure_provider_allowed(provider)
+            return provider
         base_url = os.environ.get("NOVEL_OS_BASE_URL")
         if base_url:
             assert_local_endpoint(base_url)
@@ -119,36 +145,61 @@ class LLMClient:
     def _build_backend(self, model: Optional[str]) -> Tuple[object, str, str]:
         name = self.provider_name
         env_model = os.environ.get("NOVEL_OS_MODEL")
+        settings_model = self._settings.get("model")
+        settings_base_url = self._settings.get("base_url")
+        settings_api_key = self._settings.get("api_key")
+        self._ensure_provider_allowed(name)
 
         if name in LOCAL_OPENAI_ALIASES:
             default_url, default_model, key_env = LOCAL_OPENAI_ALIASES[name]
-            base_url = self._explicit_base_url or os.environ.get("NOVEL_OS_BASE_URL", default_url)
+            base_url = self._explicit_base_url or os.environ.get("NOVEL_OS_BASE_URL") or settings_base_url or default_url
             assert_local_endpoint(base_url)
             key = (
                 self._explicit_api_key
                 or os.environ.get(key_env)
                 or os.environ.get("NOVEL_OS_API_KEY")
+                or settings_api_key
                 or "not-needed"
             )
-            return self._build_openai_compatible(base_url, key), model or env_model or default_model, base_url
+            return (
+                self._build_openai_compatible(base_url, key),
+                model or env_model or settings_model or default_model,
+                base_url,
+            )
 
         if name == "openai_compatible":
-            base_url = self._explicit_base_url or os.environ.get("NOVEL_OS_BASE_URL")
-            key = self._explicit_api_key or os.environ.get("NOVEL_OS_API_KEY") or "not-needed"
+            base_url = self._explicit_base_url or os.environ.get("NOVEL_OS_BASE_URL") or settings_base_url
+            key = self._explicit_api_key or os.environ.get("NOVEL_OS_API_KEY") or settings_api_key or "not-needed"
             if not base_url:
                 raise LLMError("openai_compatible requires NOVEL_OS_BASE_URL (localhost only).")
             assert_local_endpoint(base_url)
-            if not (model or env_model):
+            if not (model or env_model or settings_model):
                 raise LLMError("openai_compatible requires NOVEL_OS_MODEL (or model=).")
-            return self._build_openai_compatible(base_url, key), model or env_model, base_url
+            return self._build_openai_compatible(base_url, key), model or env_model or settings_model, base_url
+
+        if name == "openai":
+            base_url = self._explicit_base_url or os.environ.get("NOVEL_OS_BASE_URL") or settings_base_url or "https://api.openai.com/v1"
+            key = self._explicit_api_key or os.environ.get("NOVEL_OS_API_KEY") or os.environ.get("OPENAI_API_KEY") or settings_api_key
+            if not key:
+                raise LLMError("OpenAI requires an API key.")
+            return (
+                self._build_openai_compatible(base_url, key, require_local=False),
+                model or env_model or settings_model or "gpt-4o-mini",
+                base_url,
+            )
+
+        if name in {"anthropic", "google_gemini"}:
+            raise LLMError(
+                f"Provider {name!r} can be saved in settings, but runtime support is not installed in this local build.",
+            )
 
         raise LLMError(
-            f"Unknown provider {name!r}. Allowed: lmstudio, ollama, openai_compatible "
-            "(localhost endpoints only)."
+            f"Unknown provider {name!r}."
         )
 
-    def _build_openai_compatible(self, base_url: str, api_key: str):
-        assert_local_endpoint(base_url)
+    def _build_openai_compatible(self, base_url: str, api_key: str, *, require_local: bool = True):
+        if require_local:
+            assert_local_endpoint(base_url)
         try:
             from openai import OpenAI  # type: ignore
         except ImportError as e:
@@ -163,16 +214,28 @@ class LLMClient:
     def base_url(self) -> str:
         return self._base_url
 
+    def list_models(self) -> list[str]:
+        if hasattr(self._backend, "models"):
+            models = self._backend.models.list()
+            return sorted(
+                str(getattr(item, "id", ""))
+                for item in getattr(models, "data", [])
+                if str(getattr(item, "id", "")).strip()
+            )
+        return []
+
     def complete(self, system: str, user: str, *, label: str = "") -> str:
         """Single-turn message → assistant text."""
         from app_settings import merge_system_prompt  # noqa: WPS433
-        from prompt_budget import check_prompt_budget  # noqa: WPS433
+        from prompt_budget import check_prompt_budget, log_prompt_metrics  # noqa: WPS433
 
+        merged_system = merge_system_prompt(system)
+        log_prompt_metrics(user, system=merged_system, label=label or "LLM prompt")
         try:
             check_prompt_budget(user, label=label or "LLM prompt")
         except RuntimeError as exc:
             raise LLMError(str(exc)) from exc
-        return self._complete_openai_shape(merge_system_prompt(system), user, label=label)
+        return self._complete_openai_shape(merged_system, user, label=label)
 
     def run_agent(self, agent_name: str, user: str, agents_dir: Optional[Path] = None) -> str:
         base = agents_dir or (Path(__file__).resolve().parent.parent / "agents")
@@ -195,11 +258,17 @@ class LLMClient:
 
     def _complete_openai_shape(self, system: str, user: str, *, label: str = "") -> str:
         from llm_queue import QueueCancelledError, QueueFlushedError, get_llm_queue  # noqa: WPS433
+        from log_redaction import safe_log  # noqa: WPS433
 
         queue = get_llm_queue()
         parts: list[str] = []
+        queued_at = time.monotonic()
+        queue_wait_ms = 0
+        first_token_ms: int | None = None
         try:
             with queue.acquire(label) as slot:
+                acquired_at = time.monotonic()
+                queue_wait_ms = int((acquired_at - queued_at) * 1000)
                 if slot.is_cancelled():
                     raise QueueCancelledError("Cancelled")
                 stream = self._backend.chat.completions.create(
@@ -226,6 +295,8 @@ class LLMClient:
                         raise QueueCancelledError("Cancelled")
                     delta = chunk.choices[0].delta.content if chunk.choices else None
                     if delta:
+                        if first_token_ms is None:
+                            first_token_ms = int((time.monotonic() - acquired_at) * 1000)
                         parts.append(delta)
         except QueueFlushedError as e:
             raise LLMError(str(e)) from e
@@ -238,4 +309,10 @@ class LLMClient:
         text = "".join(parts)
         if not text.strip():
             raise LLMError("Model returned an empty response")
+        safe_log(
+            "LLM timing metrics: "
+            f"queue_wait_ms={queue_wait_ms}, "
+            f"time_to_first_token_ms={first_token_ms if first_token_ms is not None else 'none'}, "
+            f"total_ms={int((time.monotonic() - queued_at) * 1000)}",
+        )
         return text

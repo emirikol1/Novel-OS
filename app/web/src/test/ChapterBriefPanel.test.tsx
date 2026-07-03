@@ -98,22 +98,65 @@ test("loads existing brief from mocked API", async () => {
   expect(within(toggle).getByText(/saved/i)).toBeInTheDocument();
 });
 
-test("generates a draft brief into the form", async () => {
-  vi.spyOn(client.api, "generateChapterBrief").mockResolvedValue(SAMPLE_CHAPTER_BRIEF);
-  const user = userEvent.setup();
-  render(
-    <TestProviders>
-      <ChapterBriefPanel projectId="sample-p" chapterNumber={3} characters={CHARS} graphNodes={SAMPLE_GRAPH_NODES} />
-    </TestProviders>,
-  );
-  await screen.findByText(/Chapter Brief/i);
-  await user.click(screen.getByRole("button", { name: /Chapter Brief/i }));
-  await user.click(screen.getByRole("button", { name: /Generate brief/i }));
-
-  await waitFor(() => {
-    expect(screen.getByDisplayValue(/vault door opens/i)).toBeInTheDocument();
+test("starts chapter brief generation as a background job", async () => {
+  const projectId = "sample-p-brief-start";
+  const start = vi.spyOn(client.api, "generateChapterBriefAsync").mockResolvedValue({
+    job_id: "brief-job-1",
+    kind: "chapter_brief",
+    status: "running",
+    error: null,
   });
-  expect(screen.getByText(/unsaved/i)).toBeInTheDocument();
+  const interval = vi.spyOn(window, "setInterval").mockImplementation(() => 1);
+  const user = userEvent.setup();
+  try {
+    render(
+      <TestProviders>
+        <ChapterBriefPanel projectId={projectId} chapterNumber={3} characters={CHARS} graphNodes={SAMPLE_GRAPH_NODES} />
+      </TestProviders>,
+    );
+    await screen.findByText(/Chapter Brief/i);
+    await user.click(screen.getByRole("button", { name: /Chapter Brief/i }));
+    await user.click(screen.getByRole("button", { name: /Generate brief/i }));
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith(projectId, 3, {
+      source: "best",
+    }));
+  } finally {
+    interval.mockRestore();
+  }
+});
+
+test("sends current style fields when generating a chapter brief", async () => {
+  const projectId = "sample-p-brief-current-fields";
+  const start = vi.spyOn(client.api, "generateChapterBriefAsync").mockResolvedValue({
+    job_id: "brief-job-current-fields",
+    kind: "chapter_brief",
+    status: "running",
+    error: null,
+  });
+  const interval = vi.spyOn(window, "setInterval").mockImplementation(() => 1);
+  const user = userEvent.setup();
+  try {
+    render(
+      <TestProviders>
+        <ChapterBriefPanel projectId={projectId} chapterNumber={3} characters={CHARS} graphNodes={SAMPLE_GRAPH_NODES} />
+      </TestProviders>,
+    );
+    await screen.findByText(/Chapter Brief/i);
+    await user.click(screen.getByRole("button", { name: /Chapter Brief/i }));
+    await user.selectOptions(screen.getByLabelText(/Tense/i), "present");
+    await user.type(screen.getByLabelText(/Style notes/i), "Keep sentences clipped.");
+    await user.click(screen.getByRole("button", { name: /Generate brief/i }));
+
+    await waitFor(() => expect(start).toHaveBeenCalled());
+    expect(start.mock.calls[0]?.[2]?.current_brief).toEqual(expect.objectContaining({
+      tense: "present",
+      style_notes: "Keep sentences clipped.",
+      target_word_count: 0,
+    }));
+  } finally {
+    interval.mockRestore();
+  }
 });
 
 test("graph focus picker filters nodes and keeps hidden in-effect selections visible", async () => {
@@ -210,8 +253,11 @@ test("removing graph focus chip updates active_node_ids on save", async () => {
 });
 
 test("generate brief refreshes the beat board", async () => {
-  vi.spyOn(client.api, "getChapterBrief").mockResolvedValue(SAMPLE_CHAPTER_BRIEF);
+  const projectId = "sample-p-brief-refresh";
   let generated = false;
+  vi.spyOn(client.api, "getChapterBrief").mockImplementation(async () => (
+    generated ? SAMPLE_CHAPTER_BRIEF : null
+  ));
   const generatedBeats = [
     {
       id: "beat_3_001",
@@ -225,26 +271,48 @@ test("generate brief refreshes the beat board", async () => {
   const listBeats = vi.spyOn(client.api, "listChapterBeats").mockImplementation(async () => (
     generated ? generatedBeats : []
   ));
-  vi.spyOn(client.api, "generateChapterBrief").mockImplementation(async () => {
+  vi.spyOn(client.api, "generateChapterBriefAsync").mockResolvedValue({
+    job_id: "brief-job-2",
+    kind: "chapter_brief",
+    status: "running",
+    error: null,
+  });
+  vi.spyOn(client.api, "getJob").mockImplementation(async () => {
     generated = true;
-    return SAMPLE_CHAPTER_BRIEF;
+    return {
+      job_id: "brief-job-2",
+      kind: "chapter_brief",
+      status: "done",
+      error: null,
+    };
   });
+  let pollJob: (() => Promise<void>) | null = null;
+  const interval = vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+    pollJob = callback as () => Promise<void>;
+    return 1;
+  });
+  vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
   const user = userEvent.setup();
-  render(
-    <TestProviders>
-      <ChapterBriefPanel projectId="sample-p" chapterNumber={3} characters={CHARS} graphNodes={SAMPLE_GRAPH_NODES} />
-    </TestProviders>,
-  );
-  await screen.findByText(/Chapter Brief/i);
-  await user.click(screen.getByRole("button", { name: /Chapter Brief/i }));
+  try {
+    render(
+      <TestProviders>
+        <ChapterBriefPanel projectId={projectId} chapterNumber={3} characters={CHARS} graphNodes={SAMPLE_GRAPH_NODES} />
+      </TestProviders>,
+    );
+    await screen.findByText(/Chapter Brief/i);
+    await user.click(screen.getByRole("button", { name: /Chapter Brief/i }));
+    await user.click(screen.getByRole("button", { name: /Generate brief/i }));
+    expect(pollJob).toBeTruthy();
+    await pollJob?.();
 
-  await user.click(screen.getByRole("button", { name: /Generate brief/i }));
-
-  await waitFor(() => {
-    expect(screen.getByDisplayValue(/vault door opens/i)).toBeInTheDocument();
-  });
-  await waitFor(() => expect(listBeats.mock.calls.length).toBeGreaterThan(1));
-  expect(screen.getByDisplayValue("Hero finds the hidden map")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByDisplayValue(/vault door opens/i)).toBeInTheDocument();
+    });
+    await waitFor(() => expect(listBeats.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.getByDisplayValue("Hero finds the hidden map")).toBeInTheDocument();
+  } finally {
+    interval.mockRestore();
+  }
 });
 
 const MOCK_BEAT_CANDIDATES = {
@@ -474,10 +542,10 @@ test("opens context preview and shows included items, reasons, and omissions", a
   expect(within(dialog).getByText(/Hero finds the hidden map/i)).toBeInTheDocument();
 });
 
-test("character triple toggle cycles silver then gold and saves mentioned superset", async () => {
+test("character triple toggle cycles silver then gold and saves exclusive cast state", async () => {
   const save = vi.spyOn(client.api, "saveChapterBrief").mockResolvedValue({
     ...SAMPLE_CHAPTER_BRIEF,
-    mentioned_character_ids: ["char_b"],
+    mentioned_character_ids: [],
     active_character_ids: ["char_b"],
   });
   const user = userEvent.setup();
@@ -502,7 +570,7 @@ test("character triple toggle cycles silver then gold and saves mentioned supers
 
   await user.click(screen.getByRole("button", { name: /Save brief/i }));
   await waitFor(() => expect(save).toHaveBeenCalled());
-  expect(save.mock.calls[0]?.[2]?.mentioned_character_ids).toEqual(["char_b"]);
+  expect(save.mock.calls[0]?.[2]?.mentioned_character_ids).toEqual([]);
   expect(save.mock.calls[0]?.[2]?.active_character_ids).toEqual(["char_b"]);
 });
 

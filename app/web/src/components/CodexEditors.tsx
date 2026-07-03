@@ -30,6 +30,17 @@ function mergeCharacterUpdates(
   return { ...base, ...updates };
 }
 
+function characterEditableSnapshot(
+  base: CharacterDetail,
+  aliases: string[],
+  relationships: Record<string, string>,
+): string {
+  const editable: Partial<CharacterDetail> = { ...base };
+  delete editable.chapter_references;
+  delete editable.portrait_url;
+  return JSON.stringify({ ...editable, aliases, relationships });
+}
+
 export function RenumberChapterModal({
   projectId, chapter, open, onClose, onDone, onBeforeReassign,
 }: {
@@ -197,12 +208,14 @@ export function PasteChapterModal({
 }
 
 export function CharacterEditorModal({
-  projectId, characterId, open, onClose, onSaved,
+  projectId, characterId, open, onClose, onSaved, initialFocus = null,
 }: {
   projectId: string; characterId: string | null; open: boolean;
   onClose: () => void; onSaved: () => void;
+  initialFocus?: "notes" | null;
 }) {
   const toast = useToast();
+  const navigate = useNavigate();
   const [data, setData] = useState<CharacterDetail | null>(null);
   const [cast, setCast] = useState<CharacterSummary[]>([]);
   const [aliasesText, setAliasesText] = useState("");
@@ -218,6 +231,7 @@ export function CharacterEditorModal({
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notesRef = useRef<HTMLTextAreaElement | null>(null);
   const dataRef = useRef<CharacterDetail | null>(null);
   const aliasesRef = useRef("");
   const relationshipsRef = useRef<Record<string, string>>({});
@@ -234,7 +248,7 @@ export function CharacterEditorModal({
       const rels = { ...(d.relationships ?? {}) };
       setRelationships(rels);
       relationshipsRef.current = rels;
-      loadedSnapshot.current = JSON.stringify({ ...d, aliases: d.aliases ?? [], relationships: rels });
+      loadedSnapshot.current = characterEditableSnapshot(d, d.aliases ?? [], rels);
       setDirty(false);
     }).catch(() => setData(null));
     api.characters(projectId).then(setCast).catch(() => setCast([]));
@@ -248,14 +262,26 @@ export function CharacterEditorModal({
     }
   }, [open, load]);
 
+  useEffect(() => {
+    if (!open || initialFocus !== "notes" || !data) return;
+    const frame = requestAnimationFrame(() => {
+      notesRef.current?.scrollIntoView({ block: "center" });
+      notesRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, initialFocus, data?.id]);
+
   const persistCharacter = useCallback(async (opts?: { silent?: boolean }) => {
     if (!dataRef.current || !characterId) return;
     const aliases = aliasesRef.current
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-    const payload = { ...dataRef.current, aliases, relationships: relationshipsRef.current };
-    const snap = JSON.stringify(payload);
+    const editableData: Partial<CharacterDetail> = { ...dataRef.current };
+    delete editableData.chapter_references;
+    delete editableData.portrait_url;
+    const payload = { ...editableData, aliases, relationships: relationshipsRef.current };
+    const snap = characterEditableSnapshot(dataRef.current, aliases, relationshipsRef.current);
     if (snap === loadedSnapshot.current) {
       setDirty(false);
       return;
@@ -349,6 +375,11 @@ export function CharacterEditorModal({
     onClose();
   }
 
+  async function openChapter(chapterNumber: number) {
+    await handleClose();
+    navigate(`/projects/${projectId}/chapters/${chapterNumber}`);
+  }
+
   async function uploadPortrait(file: File) {
     if (!characterId) return;
     setPortraitUploading(true);
@@ -419,6 +450,7 @@ export function CharacterEditorModal({
   }
 
   if (!data) return null;
+  const chapterReferences = data.chapter_references ?? [];
 
   return (
     <Modal open={open} onClose={generating || saving || portraitUploading ? () => {} : () => void handleClose()} title={data.full_name}>
@@ -476,6 +508,35 @@ export function CharacterEditorModal({
               </div>
             </div>
           </Field>
+        </section>
+        <section className="mb-5 rounded-xl border border-paper-line bg-paper-card/60 p-4">
+          <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">
+            Chapter references
+          </h3>
+          {chapterReferences.length === 0 ? (
+            <p className="text-[13px] text-ink-muted">
+              No saved chapter briefs mark this character as present or mentioned yet.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {chapterReferences.map((ref) => (
+                <button
+                  key={ref.chapter_number}
+                  type="button"
+                  onClick={() => void openChapter(ref.chapter_number)}
+                  className="rounded-lg border border-paper-line bg-paper-bg px-3 py-2 text-left text-[12.5px] text-ink-text hover:bg-ink/5"
+                >
+                  <span className="font-semibold">
+                    Ch. {ref.chapter_number}
+                    {ref.chapter_title ? `: ${ref.chapter_title}` : ""}
+                  </span>
+                  <span className="ml-2 text-[11px] uppercase tracking-wide text-ink-muted">
+                    {ref.present ? "Present" : "Mentioned"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
         <section className="mb-5 rounded-xl border border-amber/30 bg-amber/5 p-4">
           <Field label="AI prompt">
@@ -649,6 +710,7 @@ export function CharacterEditorModal({
         ] as const).map(([key, label]) => (
           <Field key={key} label={label}>
             <textarea className={`${fieldClass} min-h-[60px]`} rows={key === "notes" ? 4 : 2}
+                      ref={key === "notes" ? notesRef : undefined}
                       value={data[key]} onChange={(e) => set(key, e.target.value)} />
           </Field>
         ))}

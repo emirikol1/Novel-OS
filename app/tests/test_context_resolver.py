@@ -11,10 +11,11 @@ from context_resolver import (  # noqa: E402
     format_bible_context_block,
     format_graph_nodes_block,
     resolve_bible_context,
+    resolve_brief_graph_context,
     resolve_graph_nodes,
 )
 from state_manager import StoryState, initialize_project  # noqa: E402
-from story_graph import StoryGraphEdge, StoryGraphNode  # noqa: E402
+from story_graph import ChapterBeat, ChapterBrief, StoryGraphEdge, StoryGraphNode  # noqa: E402
 
 
 def _seed_bible(state: StoryState) -> None:
@@ -131,6 +132,46 @@ def test_format_graph_nodes_marks_related_neighbors(tmp_path):
     assert "The Heist" in block
     assert "Alarm trip" in block
     assert "related" in block
+
+
+def test_resolve_brief_graph_context_includes_beat_linked_nodes(tmp_path):
+    initialize_project(str(tmp_path), "Beat Graph", "Thriller")
+    state = StoryState(str(tmp_path))
+    state.story_graph_nodes["brief_node"] = StoryGraphNode(
+        id="brief_node",
+        kind="plot_thread",
+        title="Brief-selected plot",
+        description="Primary focus",
+        priority=5,
+    )
+    state.story_graph_nodes["beat_node"] = StoryGraphNode(
+        id="beat_node",
+        kind="beat",
+        title="Beat-linked plot",
+        description="Beat focus",
+        priority=4,
+    )
+    brief = ChapterBrief(chapter_number=2, active_node_ids=["brief_node"])
+    state.set_chapter_beats(
+        2,
+        [
+            ChapterBeat(
+                id="beat_2_001",
+                title="Planned beat",
+                linked_node_ids=["beat_node"],
+            ),
+        ],
+    )
+
+    resolved = resolve_brief_graph_context(
+        state,
+        brief,
+        budget=ContextBudget(max_items=8, max_chars=4000, max_selected_nodes=8, max_related_nodes=0),
+    )
+
+    labels = {item.label for item in resolved.items}
+    assert "Brief-selected plot" in labels
+    assert "Beat-linked plot" in labels
 
 
 def test_bible_excludes_tone(tmp_path):

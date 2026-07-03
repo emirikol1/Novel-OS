@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   SAMPLE_GRAPH_EDGES,
   SAMPLE_GRAPH_NODES,
+  buildChapterBeatGraph,
   edgeCurvePath,
+  focusedStoryGraph,
+  isChapterBeatGraphEdgeId,
+  isChapterBeatGraphNodeId,
   kindLabel,
   mindMapLayout,
   nodeDisplayEdges,
@@ -39,5 +43,39 @@ describe("storyGraph utils", () => {
   it("formats kind labels", () => {
     expect(kindLabel("plot_thread")).toBe("plot thread");
     expect(kindLabel("character_arc")).toBe("character arc");
+  });
+
+  it("turns linked chapter beats into graph leaves", () => {
+    const graph = buildChapterBeatGraph(SAMPLE_GRAPH_NODES, SAMPLE_GRAPH_EDGES, {
+      3: [
+        {
+          id: "beat_3_001",
+          title: "Crack the alarm",
+          summary: "The alarm thread advances.",
+          sort_order: 0,
+          status: "planned",
+          linked_node_ids: ["sg_main"],
+        },
+      ],
+    });
+
+    expect(graph.nodes.some((node) => isChapterBeatGraphNodeId(node.id))).toBe(true);
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        source_id: "sg_main",
+        target_id: "chapter-beat:3:beat_3_001",
+        kind: "contains",
+      }),
+    );
+    expect(graph.edges.some((edge) => isChapterBeatGraphEdgeId(edge.id))).toBe(true);
+  });
+
+  it("focuses a graph to the selected node and immediate neighbors", () => {
+    const focused = focusedStoryGraph(SAMPLE_GRAPH_NODES, SAMPLE_GRAPH_EDGES, "sg_sub2");
+
+    expect(focused.focusId).toBe("sg_sub2");
+    expect(focused.nodes.map((node) => node.id).sort()).toEqual(["sg_main", "sg_sub1", "sg_sub2"]);
+    expect(focused.incomingIds.has("sg_main")).toBe(true);
+    expect(focused.outgoingIds.has("sg_sub1")).toBe(true);
   });
 });

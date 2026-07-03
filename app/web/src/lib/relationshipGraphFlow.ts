@@ -21,6 +21,15 @@ export type RelationshipFlowEdgeData = {
   targetHandle: string;
 };
 
+export type FocusedRelationshipGraph = {
+  nodeIds: string[];
+  edges: RelationshipEdge[];
+  focusId: string | null;
+  incomingIds: Set<string>;
+  outgoingIds: Set<string>;
+  hiddenNodeCount: number;
+};
+
 const DEFAULT_CURVATURE = 0.25;
 const LABEL_OFFSET_PX = 22;
 
@@ -101,6 +110,49 @@ export function writeRelationshipLayout(
   } catch {
     /* ignore quota errors */
   }
+}
+
+/** Focus relationship maps to one character plus immediate incoming/outgoing links. */
+export function focusedRelationshipGraph(
+  nodeIds: string[],
+  edges: RelationshipEdge[],
+  focusId?: string | null,
+): FocusedRelationshipGraph {
+  if (!focusId || !nodeIds.includes(focusId)) {
+    return {
+      nodeIds,
+      edges,
+      focusId: null,
+      incomingIds: new Set(),
+      outgoingIds: new Set(),
+      hiddenNodeCount: 0,
+    };
+  }
+
+  const visibleIds = new Set([focusId]);
+  const incomingIds = new Set<string>();
+  const outgoingIds = new Set<string>();
+
+  for (const edge of edges) {
+    if (edge.fromId === focusId) {
+      visibleIds.add(edge.toId);
+      outgoingIds.add(edge.toId);
+    }
+    if (edge.toId === focusId) {
+      visibleIds.add(edge.fromId);
+      incomingIds.add(edge.fromId);
+    }
+  }
+
+  const focusedNodeIds = nodeIds.filter((id) => visibleIds.has(id));
+  return {
+    nodeIds: focusedNodeIds,
+    edges: edges.filter((edge) => visibleIds.has(edge.fromId) && visibleIds.has(edge.toId)),
+    focusId,
+    incomingIds,
+    outgoingIds,
+    hiddenNodeCount: Math.max(0, nodeIds.length - focusedNodeIds.length),
+  };
 }
 
 /** Merge saved positions with a radial fallback for new characters. */

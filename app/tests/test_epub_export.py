@@ -70,11 +70,26 @@ def test_build_epub_valid_zip_and_mimetype():
         assert info.compress_type == zipfile.ZIP_STORED
         assert "OEBPS/content.opf" in zf.namelist()
         assert "OEBPS/nav.xhtml" in zf.namelist()
+        assert "OEBPS/style.css" in zf.namelist()
         assert "OEBPS/chapters/chapter-001.xhtml" in zf.namelist()
         assert "OEBPS/chapters/chapter-002.xhtml" in zf.namelist()
         ch1 = zf.read("OEBPS/chapters/chapter-001.xhtml").decode("utf-8")
+        assert "../style.css" in ch1
         assert "Chapter One" in ch1
         assert "First paragraph." in ch1
+
+
+def test_build_epub_can_indent_paragraphs():
+    data = build_epub(
+        "My Book",
+        "Author",
+        [(1, "Opening", "First paragraph.\n\nSecond paragraph.")],
+        paragraph_format="indented",
+    )
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        css = zf.read("OEBPS/style.css").decode("utf-8")
+        assert "text-indent: 1.5em" in css
+        assert "p { margin: 0;" in css
 
 
 def test_export_epub_skips_chapters_without_final(tmp_path):
@@ -127,6 +142,27 @@ def test_export_epub_endpoint(tmp_path):
         assert "Jordan Lee" in ch1
         assert "Old Archive" in ch1
         assert "[[char:" not in ch1
+
+
+def test_export_epub_uses_project_paragraph_format(tmp_path):
+    chapters = {
+        "1": {"number": 1, "title": "One", "status": "complete",
+              "word_count": 3, "pov_character": ""},
+    }
+    _seed_project(tmp_path, "p", "EPUB Tale", "Drama", chapters=chapters)
+    state_path = tmp_path / "p" / "outputs" / "state" / "story_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["style_profile"] = {"paragraph_format": "indented"}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _seed_chapter_files(tmp_path, "p", 1, final="First paragraph.\n\nSecond paragraph.")
+
+    svc = ProjectService(tmp_path)
+    _, data = svc.export_epub("p")
+
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        css = zf.read("OEBPS/style.css").decode("utf-8")
+        assert "text-indent: 1.5em" in css
+
 
 
 def test_export_epub_404_and_400(tmp_path):

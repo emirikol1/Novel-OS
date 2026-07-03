@@ -75,3 +75,75 @@ test("pipeline buckets open filtered chapter list", async () => {
   expect(screen.getByText("Opening")).toBeInTheDocument();
   expect(screen.queryByText("Finale")).not.toBeInTheDocument();
 });
+
+test("defers non-visible dashboard files and quick-loads selected tab data", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(client.api, "project").mockResolvedValue({
+    id: "p", title: "My Novel", genre: "Drama", author: "A",
+    chapter_count: 1, status: "in_progress", style: {},
+  });
+  vi.spyOn(client.api, "chapters").mockResolvedValue([
+    { number: 1, title: "Opening", status: "drafted", word_count: 2300, pov: "Lena", pipeline_step: "drafted" },
+  ]);
+  const characters = vi.spyOn(client.api, "characters").mockResolvedValue([]);
+  const plotThreads = vi.spyOn(client.api, "plotThreads").mockResolvedValue([]);
+  const timelineEvents = vi.spyOn(client.api, "timelineEvents").mockResolvedValue([]);
+  const researchSparks = vi.spyOn(client.api, "researchSparks").mockResolvedValue([]);
+  vi.spyOn(client.api, "storyGraphNodes").mockResolvedValue([]);
+  vi.spyOn(client.api, "storyGraphEdges").mockResolvedValue([]);
+  render(
+    <TestProviders>
+      <MemoryRouter initialEntries={["/projects/p"]}>
+        <Routes><Route path="/projects/:id" element={<ProjectDashboard />} /></Routes>
+      </MemoryRouter>
+    </TestProviders>,
+  );
+
+  expect(await screen.findByText("My Novel")).toBeInTheDocument();
+  expect(screen.getByText("Opening")).toBeInTheDocument();
+  expect(characters).not.toHaveBeenCalled();
+  expect(plotThreads).not.toHaveBeenCalled();
+  expect(timelineEvents).not.toHaveBeenCalled();
+  expect(researchSparks).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("button", { name: "Timeline" }));
+
+  expect(characters).toHaveBeenCalledWith("p");
+  expect(timelineEvents).toHaveBeenCalledWith("p");
+  expect(plotThreads).not.toHaveBeenCalled();
+  expect(researchSparks).not.toHaveBeenCalled();
+});
+
+test("opens review inbox tab and Mine All modal", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(client.api, "project").mockResolvedValue({
+    id: "p", title: "My Novel", genre: "Drama", author: "A",
+    chapter_count: 1, status: "in_progress", style: {},
+  });
+  vi.spyOn(client.api, "chapters").mockResolvedValue([
+    { number: 1, title: "Opening", status: "drafted", word_count: 2300, pov: "Lena", pipeline_step: "drafted" },
+  ]);
+  vi.spyOn(client.api, "reviewableChanges").mockResolvedValue([]);
+
+  render(
+    <TestProviders>
+      <MemoryRouter initialEntries={["/projects/p"]}>
+        <Routes><Route path="/projects/:id" element={<ProjectDashboard />} /></Routes>
+      </MemoryRouter>
+    </TestProviders>,
+  );
+
+  await screen.findByText("My Novel");
+  await user.click(screen.getByRole("button", { name: "Review" }));
+
+  expect(await screen.findByText("Reviewable Changes")).toBeInTheDocument();
+  expect(client.api.reviewableChanges).toHaveBeenCalledWith("p");
+
+  await user.click(screen.getByRole("button", { name: /Project Operations/i }));
+  await user.click(screen.getByRole("button", { name: /Mine All/i }));
+
+  expect(screen.getByRole("dialog", { name: "Mine All" })).toBeInTheDocument();
+  expect(screen.getByText("Missing outlines")).toBeInTheDocument();
+  expect(screen.getByText("Missing chapter briefs")).toBeInTheDocument();
+  expect(screen.getByText("Everything")).toBeInTheDocument();
+});

@@ -210,7 +210,7 @@ The response has exactly two parts, in this order:
 
 Inside the block, use **only** these field names. Spelling and underscores matter:
 
-- `Characters_Present` — bulleted list of full character names that appeared
+- `Characters_Present` — bulleted list of full character names directly present on-page in the scene/chapter: POV, speaking, acting, reacting, moving, being addressed in present action, or otherwise actively participating. Include known characters even when the prose used a first name, surname, title, nickname, alias, or `[[char:...]]` label. Do not include characters who are only remembered, discussed, planned around, rumored about, reported on, or otherwise referenced while absent.
 - `Key_Events` — bulleted list of significant plot beats (one sentence each)
 - `Emotional_Shifts` — bulleted list of `Character Name: new emotional state`
 - `New_Information_Revealed` — bulleted list of facts the reader/characters learned (use `[None]` if nothing new)

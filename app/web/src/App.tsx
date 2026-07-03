@@ -18,12 +18,18 @@ const ProjectDashboard = lazy(() => import("./routes/ProjectDashboard"));
 const ChapterView = lazy(() => import("./routes/ChapterView"));
 const HelpGuide = lazy(() => import("./routes/HelpGuide"));
 
+export function routeAnimationKey(pathname: string): string {
+  const match = pathname.match(/^\/projects\/([^/]+)\/chapters\/[^/]+$/);
+  if (!match) return pathname;
+  return `/projects/${match[1]}/chapters`;
+}
+
 function AnimatedRoutes() {
   const location = useLocation();
   return (
     <AnimatePresence mode="wait">
       <motion.div
-        key={location.pathname}
+        key={routeAnimationKey(location.pathname)}
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -6 }}

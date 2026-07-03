@@ -9,10 +9,18 @@ export type BackgroundJobKind =
   | "mine-plots"
   | "mine-characters"
   | "mine-bible"
+  | "chapter-outline"
+  | "chapter-brief"
+  | "format-paragraphs"
+  | "check-dialogue-quotes"
+  | "chapter-briefs"
   | "landed-beats"
   | "ebook-import"
   | "batch-outlines"
-  | "batch-codex";
+  | "batch-codex"
+  | "chapter-titles"
+  | "mine-all"
+  | "reviewable-graph-suggestions";
 
 type Watcher = {
   timer: number;

@@ -192,7 +192,6 @@ def test_full_v1_fixture_end_to_end(tmp_path):
     assert result.changed is True
     assert "migrate_graph_from_plot_threads" in result.steps_applied
     assert "backfill_node_lifespan" in result.steps_applied
-    assert "sync_brief_mentioned_characters" in result.steps_applied
     assert "migrate_brief_beats_to_chapter_beats" in result.steps_applied
     assert state.schema_version == CURRENT_SCHEMA_VERSION
 
@@ -204,11 +203,12 @@ def test_full_v1_fixture_end_to_end(tmp_path):
     assert main_node.legacy_plot_thread_id == "plot_main"
 
     brief1 = state.chapter_briefs[1]
-    assert "char_a" in brief1.mentioned_character_ids
+    assert "char_a" not in brief1.mentioned_character_ids
     assert "char_a" in brief1.active_character_ids
 
     brief2 = state.chapter_briefs[2]
-    assert set(brief2.mentioned_character_ids) == {"char_a", "char_b"}
+    assert brief2.mentioned_character_ids == []
+    assert set(brief2.active_character_ids) == {"char_a", "char_b"}
 
     beats1 = state.chapter_beats[1]
     assert len(beats1) == 2
@@ -404,4 +404,5 @@ def test_portable_import_triggers_migration(tmp_path):
     assert raw["schema_version"] == CURRENT_SCHEMA_VERSION
     assert raw["story_graph_nodes"]
     assert raw["chapter_beats"]["1"]
-    assert "char_a" in raw["chapter_briefs"]["1"]["mentioned_character_ids"]
+    assert "char_a" in raw["chapter_briefs"]["1"]["active_character_ids"]
+    assert "char_a" not in raw["chapter_briefs"]["1"]["mentioned_character_ids"]

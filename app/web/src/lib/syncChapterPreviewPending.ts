@@ -1,4 +1,9 @@
-import { api, type RedraftPreview, type RegeneratePreview } from "../api/client";
+import {
+  api,
+  type BoundaryAlignmentPreview,
+  type RedraftPreview,
+  type RegeneratePreview,
+} from "../api/client";
 import type { StageKey } from "../components/PipelineFlow";
 import { setChapterPreviewPending } from "./chapterPreviewPending";
 
@@ -16,14 +21,21 @@ export function previewPendingStages(
   expand: RegeneratePreview | null | undefined,
   paragraphs: RegeneratePreview | null | undefined,
   redraft?: RedraftPreview | null | undefined,
+  alignment?: BoundaryAlignmentPreview | null | undefined,
+  dialogueQuotes?: RegeneratePreview | null | undefined,
 ): StageKey[] {
   const out: StageKey[] = [];
   if (outline) out.push("outline");
-  for (const preview of [regenerate, expand, paragraphs]) {
+  for (const preview of [regenerate, expand, paragraphs, dialogueQuotes]) {
     const stage = stageFromSource(preview?.source);
     if (stage && !out.includes(stage)) out.push(stage);
   }
   if (redraft && !out.includes("draft")) out.push("draft");
+  if (alignment) {
+    for (const stage of [stageFromSource(alignment.source), "revised" as StageKey]) {
+      if (stage && !out.includes(stage)) out.push(stage);
+    }
+  }
   return out;
 }
 
@@ -32,15 +44,20 @@ export async function syncChapterPreviewPendingFromApi(
   projectId: string,
   chapter: number,
 ): Promise<boolean> {
-  const [regenerate, outline, expand, paragraphs, redraft, beats] = await Promise.all([
+  const results = await Promise.allSettled([
     api.getRegeneratePreview(projectId, chapter),
     api.getOutlinePreview(projectId, chapter),
     api.getExpandPreview(projectId, chapter),
     api.getParagraphsPreview(projectId, chapter),
+    api.getDialogueQuotesPreview(projectId, chapter),
     api.getRedraftPreview(projectId, chapter),
+    api.getAlignmentPreview(projectId, chapter),
     api.getChapterBeatCandidatesPreview(projectId, chapter),
   ]);
-  const pending = Boolean(regenerate || outline || expand || paragraphs || redraft || beats);
+  const pending = results.some((result) => result.status === "fulfilled" && Boolean(result.value));
+  if (!pending && results.some((result) => result.status === "rejected")) {
+    return false;
+  }
   setChapterPreviewPending(projectId, chapter, pending);
   return pending;
 }

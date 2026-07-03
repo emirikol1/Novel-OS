@@ -2,6 +2,7 @@ import {
   cloneElement,
   isValidElement,
   useCallback,
+  useEffect,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -24,21 +25,19 @@ export default function ToolTip({
   children: ReactNode;
   className?: string;
 }) {
-  const { activeId, scheduleActive, clearActive, scheduleDismiss } = useToolTipContext();
+  const { activeId, activeToken, scheduleActive, clearActive, scheduleDismiss } = useToolTipContext();
   const token = useToolTipToken();
-  const visible = activeId === id;
+  const visible = activeId === id && activeToken === token;
 
   const show = useCallback(() => {
     scheduleActive(id, token);
   }, [id, scheduleActive, token]);
 
   const hide = useCallback(() => {
-    if (activeId === id) {
-      scheduleDismiss(token);
-    } else {
-      clearActive(token);
-    }
-  }, [activeId, clearActive, id, scheduleDismiss, token]);
+    scheduleDismiss(token);
+  }, [scheduleDismiss, token]);
+
+  useEffect(() => () => clearActive(token), [clearActive, token]);
 
   type AnchorProps = React.HTMLAttributes<HTMLElement> & {
     ref?: React.Ref<HTMLElement>;

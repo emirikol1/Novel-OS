@@ -28,13 +28,14 @@ export default function FinalEditor(props: {
   focusAnnotationId?: string | null;
   fluidLayout?: { columnMaxPx: number; fontRem: number };
   showSaveStatus?: boolean;
+  paragraphFormat?: string;
 }) {
   const {
     hasFinal, canPromote, promoteFrom, text, onChange, onPromote,
     onReopen, canReopen, dirty, busy, lastSaved, focus, onToggleFocus,
     mentionTargets, projectId, onCharacterMentionAction,
     annotations, onCreateAnnotation, focusAnnotationId, fluidLayout,
-    showSaveStatus,
+    showSaveStatus, paragraphFormat,
   } = props;
 
   if (!hasFinal) {
@@ -81,6 +82,7 @@ export default function FinalEditor(props: {
       focusAnnotationId={focusAnnotationId}
       fluidLayout={fluidLayout}
       showSaveStatus={showSaveStatus}
+      paragraphFormat={paragraphFormat}
       articleClassName="rounded-md bg-paper-card px-11 py-12 shadow-[var(--shadow-paper)] ring-1 ring-paper-line"
       trailing={
         canReopen && onReopen ? (

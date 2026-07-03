@@ -54,6 +54,24 @@ def markdown_to_xhtml_body(text: str) -> str:
     return "\n".join(parts)
 
 
+def _stylesheet(paragraph_format: str) -> str:
+    """Return EPUB CSS for manuscript paragraph presentation."""
+    if paragraph_format == "indented":
+        return (
+            "body { line-height: 1.4; }\n"
+            "p { margin: 0; text-indent: 1.5em; }\n"
+            "h1 + p, h2 + p, h3 + p, hr + p, p:first-of-type { text-indent: 0; }\n"
+            "hr { border: 0; margin: 1.5em 0; text-align: center; }\n"
+            "hr::before { content: '* * *'; }\n"
+        )
+    return (
+        "body { line-height: 1.4; }\n"
+        "p { margin: 0 0 1em; text-indent: 0; }\n"
+        "hr { border: 0; margin: 1.5em 0; text-align: center; }\n"
+        "hr::before { content: '* * *'; }\n"
+    )
+
+
 def _chapter_xhtml(chapter_title: str, body_html: str) -> str:
     title_esc = html.escape(chapter_title)
     return (
@@ -61,6 +79,7 @@ def _chapter_xhtml(chapter_title: str, body_html: str) -> str:
         '<html xmlns="http://www.w3.org/1999/xhtml">\n'
         "<head>\n"
         f"  <title>{title_esc}</title>\n"
+        '  <link rel="stylesheet" type="text/css" href="../style.css"/>\n'
         "</head>\n"
         "<body>\n"
         f"{body_html}\n"
@@ -79,7 +98,7 @@ def _nav_xhtml(entries: list[tuple[str, str]]) -> str:
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<html xmlns="http://www.w3.org/1999/xhtml" '
         'xmlns:epub="http://www.idpf.org/2007/ops">\n'
-        "<head><title>Navigation</title></head>\n"
+        '<head><title>Navigation</title><link rel="stylesheet" type="text/css" href="style.css"/></head>\n'
         "<body>\n"
         '  <nav epub:type="toc" id="toc">\n'
         "    <ol>\n"
@@ -103,6 +122,7 @@ def _content_opf(
     manifest = [
         '    <item id="nav" href="nav.xhtml" '
         'media-type="application/xhtml+xml" properties="nav"/>',
+        '    <item id="style" href="style.css" media-type="text/css"/>',
     ]
     spine: list[str] = []
     for item_id, href in chapter_items:
@@ -146,8 +166,12 @@ def build_epub(
     title: str,
     author: str,
     chapters: list[tuple[int, str, str]],
+    *,
+    paragraph_format: str = "block",
 ) -> bytes:
     """Build EPUB bytes from (number, title, final_text) tuples."""
+    if paragraph_format not in {"block", "indented"}:
+        paragraph_format = "block"
     book_id = f"urn:uuid:{uuid.uuid4()}"
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -156,6 +180,7 @@ def build_epub(
         zf.writestr(zinfo, "application/epub+zip")
 
         zf.writestr("META-INF/container.xml", _CONTAINER_XML)
+        zf.writestr("OEBPS/style.css", _stylesheet(paragraph_format))
 
         chapter_items: list[tuple[str, str]] = []
         nav_entries: list[tuple[str, str]] = []

@@ -48,6 +48,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(client.api, "storyGraphNodes").mockResolvedValue(SAMPLE_GRAPH_NODES);
   vi.spyOn(client.api, "storyGraphEdges").mockResolvedValue(SAMPLE_GRAPH_EDGES);
+  vi.spyOn(client.api, "listChapterBeats").mockResolvedValue([]);
 });
 
 test("renders sample story graph nodes in workbench", async () => {

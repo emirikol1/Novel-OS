@@ -6,6 +6,28 @@ The **Story Bible** remains the durable canon store: one-fact-per-line worldbuil
 
 Legacy **plot threads** remain in `story_state.json` for backward compatibility, mining, and duplicate search. They are not deleted when you migrate.
 
+## Design Intent
+
+The graph exists to reduce author bookkeeping, not to create a second outline the author must maintain by hand. It should answer practical drafting questions quickly:
+
+- What story arcs, subplots, mysteries, themes, and beats matter now?
+- Which characters are attached to those story elements?
+- Which chapter or act should carry each element?
+- What dependencies, foreshadowing, or resolution links should the agents consider?
+- What context will be injected into planning, drafting, revision, and validation?
+
+The ideal workflow is **author writes or plans normally → Novel OS suggests graph updates → author reviews or auto-accepts small, understandable changes → the graph drives briefs and context**. Manual graph editing remains available for intentional structure, but the app should do as much extraction, linking, pinning, and duplicate detection as possible.
+
+## Product Principles
+
+- **Review first:** AI-generated or mined graph changes should be previewed before they modify canonical state.
+- **Post-apply review:** If the author chooses auto-accept, applied changes should remain in the Review queue until marked reviewed or safely reverted.
+- **Preserve author edits:** Sync and migration must not overwrite manually curated titles, descriptions, layout, act placement, chapter pins, or relationships without explicit approval.
+- **Incremental over rebuild:** Prefer adding or patching missing graph facts to forcing users to rebuild the map.
+- **Map as control surface:** A selected graph node should make it easy to inspect/edit lifespan, act, chapter pins, linked characters, parent/child structure, and prompt relevance.
+- **Context clarity:** If a node affects prompts, the UI should make that visible through chapter brief selection, blueprint placement, or context preview.
+- **Low workload:** The user’s main job should be approving, dismissing, or lightly editing suggestions, not redrawing diagrams after every chapter.
+
 ## Recommended workflow
 
 1. **Migrate (optional)** — Story Graph tab → **Build graph from plots**. Copies plot threads and subplot lines into graph nodes and `contains` edges. Repeated subplot labels become one shared subplot node that can belong to multiple plots. Original plot threads stay intact.
@@ -14,7 +36,30 @@ Legacy **plot threads** remain in `story_state.json` for backward compatibility,
 4. **Outline** — Write or generate the chapter outline (Architect reads brief + outline when present).
 5. **Draft** — Generate Draft; Scribe uses outline and brief-scoped graph context.
 6. **Review landed beats** — After prose exists, extract landed beats into the chapter brief. These are chapter-local events, not Story Bible canon.
-7. **Mine & sync** — Mine Plots still updates legacy plot threads; Mine Bible extracts durable canon. Review applies, then re-run migration or edit the graph manually.
+7. **Mine & sync** — Mine Plots still updates legacy plot threads; Mine Bible extracts durable canon. Review applies, then sync or edit the graph without replacing manual structure.
+
+## Sync Model
+
+Today, migration copies legacy plot threads and subplot lines into graph nodes, and chapter briefs mirror active node selections into chapter pins. This is intentionally non-destructive.
+
+The long-term model should be an incremental graph-sync layer:
+
+- Plot mining can propose new graph nodes, status changes, character links, and lifespan updates.
+- Character mining can propose relationship edges and character-to-plot involvement.
+- Chapter briefs can propose chapter pins and landed-beat links.
+- Duplicate scans can propose merges without collapsing unrelated author intent.
+
+Sync should be treated as suggestion review, not automatic truth. Apply only the changes the author accepts, and preserve existing manual layout.
+
+## Review Queue
+
+Graph suggestions are stored as generic reviewable changes in project state. The Review tab is the central queue for:
+
+- Pending graph suggestions waiting for Apply or Dismiss.
+- Auto-applied graph suggestions waiting for Mark reviewed or Revert.
+- Blocked reverts with conflict reasons and manual resolution guidance.
+
+Side-by-side review shows the current/proposed structured graph fields. Revert is conservative: created nodes can be removed only if no edges, chapter brief selections, beat links, or newer edits depend on them. Relationship edges and chapter pins are also reverted only when their current state still matches the applied change.
 
 ## Prompt behavior
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
@@ -11,6 +11,7 @@ import {
   type BoundaryAlignmentPreview,
   type CommentItem,
   type AddCommentPayload,
+  type ProjectDetail,
 } from "../api/client";
 import PipelineFlow, { type StageKey } from "../components/PipelineFlow";
 import FinalEditor from "../components/FinalEditor";
@@ -77,6 +78,7 @@ import ChapterMinePreviewModal from "../components/ChapterMinePreviewModal";
 import { briefFromSummary, briefHasContent } from "../lib/chapterBrief";
 import { setMinePreviewPending } from "../lib/minePreviewPending";
 import { buildMentionTargets, type MentionTarget } from "../lib/mentions";
+import { manuscriptProseClassName } from "../lib/manuscriptLayout";
 
 const STAGE_KEYS: StageKey[] = ["outline", "draft", "revised", "final"];
 
@@ -93,6 +95,8 @@ const MINE_LABELS: Record<MineKind, string> = {
 };
 
 const EXPAND_MARKER_RE = /\[\[(?:expand|ai)\s*:/gi;
+const ALIGNMENT_REVIEW_NOTE =
+  "Review the current chapter outline/brief/beats/end-state and the next chapter opening/brief/beats after keeping an alignment.";
 
 function countExpandMarkers(text: string): number {
   return (text.match(EXPAND_MARKER_RE) || []).length;
@@ -120,6 +124,7 @@ export default function ChapterView() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [meta, setMeta] = useState<ChapterDetail | null>(null);
+  const [project, setProject] = useState<ProjectDetail | null>(null);
   const [stages, setStages] = useState<ChapterStages | null>(null);
   const [siblings, setSiblings] = useState<ChapterSummary[]>([]);
   const [characters, setCharacters] = useState<CharacterSummary[]>([]);
@@ -141,6 +146,9 @@ export default function ChapterView() {
   const [paragraphsPreview, setParagraphsPreview] = useState<RegeneratePreview | null>(null);
   const [paragraphsPreviewText, setParagraphsPreviewText] = useState("");
   const [formattingParagraphs, setFormattingParagraphs] = useState(false);
+  const [dialogueQuotesPreview, setDialogueQuotesPreview] = useState<RegeneratePreview | null>(null);
+  const [dialogueQuotesPreviewText, setDialogueQuotesPreviewText] = useState("");
+  const [checkingDialogueQuotes, setCheckingDialogueQuotes] = useState(false);
   const [aligningBoundary, setAligningBoundary] = useState(false);
   const [alignmentPreview, setAlignmentPreview] = useState<BoundaryAlignmentPreview | null>(null);
   const [alignmentTextA, setAlignmentTextA] = useState("");
@@ -199,8 +207,13 @@ export default function ChapterView() {
     setInspectorWidth,
   } = useLayoutPrefs();
   const manuscriptPrefs = useManuscriptPrefs();
+  const paragraphFormat = project?.style?.paragraph_format ?? "block";
   const studioRef = useRef<HTMLDivElement>(null);
   const centerRef = useRef<HTMLDivElement>(null);
+  const binderScrollRef = useRef<HTMLDivElement>(null);
+  const binderScrollTopRef = useRef(0);
+  const currentChapterRef = useRef({ projectId: id, chapter: num });
+  currentChapterRef.current = { projectId: id, chapter: num };
   const studioWidth = useElementWidth(studioRef);
   const centerWidth = useElementWidth(centerRef);
   const [inspectorWidthLive, setInspectorWidthLive] = useState(inspectorWidth);
@@ -233,6 +246,14 @@ export default function ChapterView() {
     }
   }, [inspectorMaxWidth, inspectorWidthLive, setInspectorWidth]);
 
+  useLayoutEffect(() => {
+    const binder = binderScrollRef.current;
+    if (!binder) return;
+    if (binder.scrollTop !== binderScrollTopRef.current) {
+      binder.scrollTop = binderScrollTopRef.current;
+    }
+  });
+
   const studioColumnStyle = useMemo(
     () => ({
       width: fluidLayout.columnMaxPx,
@@ -253,7 +274,15 @@ export default function ChapterView() {
   });
   const { lastAccessedChapter, lastFunction: lastFn } = useWorkflowMarkers(id, num);
   const hasPreviewPending =
-    Boolean(regeneratePreview || outlinePreview || expandPreview || paragraphsPreview || redraftPreview)
+    Boolean(
+      regeneratePreview
+      || outlinePreview
+      || expandPreview
+      || paragraphsPreview
+      || dialogueQuotesPreview
+      || alignmentPreview
+      || redraftPreview,
+    )
     || hasChapterPreviewPending(id, num);
 
   // refs so the unmount/unload/autosave handlers see the latest values
@@ -417,6 +446,7 @@ export default function ChapterView() {
     let outlinePrev: RegeneratePreview | null = null;
     let expandPrev: RegeneratePreview | null = null;
     let paragraphsPrev: RegeneratePreview | null = null;
+    let dialogueQuotesPrev: RegeneratePreview | null = null;
     let redraftPrev: RedraftPreview | null = null;
     const applyStages = (s: ChapterStages) => {
       stamp(() => {
@@ -442,6 +472,11 @@ export default function ChapterView() {
       });
     };
     return Promise.all([
+      api.project(id).then((p) => stamp(() => setProject(p))).catch((e) => {
+        void redirectOnChapterNotFound(e, id, navigate, toast, api.project).then((handled) => {
+          if (!handled) stamp(() => setProject(null));
+        });
+      }),
       api.chapter(id, num).then((m) => stamp(() => setMeta(m))).catch((e) => {
         void redirectOnChapterNotFound(e, id, navigate, toast, api.project).then((handled) => {
           if (!handled) stamp(() => setError(String(e)));
@@ -503,6 +538,18 @@ export default function ChapterView() {
         setParagraphsPreview(null);
         setParagraphsPreviewText("");
       })),
+      api.getDialogueQuotesPreview(id, num).then((p) => {
+        dialogueQuotesPrev = p;
+        stamp(() => {
+          setDialogueQuotesPreview(p);
+          if (p) setDialogueQuotesPreviewText(p.text);
+          else setDialogueQuotesPreviewText("");
+        });
+      }).catch(() => stamp(() => {
+        dialogueQuotesPrev = null;
+        setDialogueQuotesPreview(null);
+        setDialogueQuotesPreviewText("");
+      })),
       api.getAlignmentPreview(id, num).then((p) => {
         stamp(() => {
           setAlignmentPreview(p);
@@ -547,7 +594,7 @@ export default function ChapterView() {
         setChapterPreviewPending(
           id,
           num,
-          Boolean(regPreview || outlinePrev || expandPrev || paragraphsPrev || redraftPrev || beats),
+          Boolean(regPreview || outlinePrev || expandPrev || paragraphsPrev || dialogueQuotesPrev || redraftPrev || beats),
         );
       });
     });
@@ -562,14 +609,48 @@ export default function ChapterView() {
   }, [id, num]);
 
   useEffect(() => {
-    if (regeneratePreview || outlinePreview || expandPreview || paragraphsPreview || redraftPreview) {
+    if (
+      regeneratePreview
+      || outlinePreview
+      || expandPreview
+      || paragraphsPreview
+      || dialogueQuotesPreview
+      || alignmentPreview
+      || redraftPreview
+    ) {
       setChapterPreviewPending(id, num, true);
     }
-  }, [id, num, regeneratePreview, outlinePreview, expandPreview, paragraphsPreview, redraftPreview]);
+  }, [
+    id,
+    num,
+    regeneratePreview,
+    outlinePreview,
+    expandPreview,
+    paragraphsPreview,
+    dialogueQuotesPreview,
+    alignmentPreview,
+    redraftPreview,
+  ]);
 
   const previewStageStars = useMemo(
-    () => previewPendingStages(regeneratePreview, outlinePreview, expandPreview, paragraphsPreview, redraftPreview),
-    [regeneratePreview, outlinePreview, expandPreview, paragraphsPreview, redraftPreview],
+    () => previewPendingStages(
+      regeneratePreview,
+      outlinePreview,
+      expandPreview,
+      paragraphsPreview,
+      redraftPreview,
+      alignmentPreview,
+      dialogueQuotesPreview,
+    ),
+    [
+      regeneratePreview,
+      outlinePreview,
+      expandPreview,
+      paragraphsPreview,
+      dialogueQuotesPreview,
+      redraftPreview,
+      alignmentPreview,
+    ],
   );
 
   useEffect(() => {
@@ -634,6 +715,12 @@ export default function ChapterView() {
   const { run, runningStage, isRunning } = useRunPhase(id, handlePhaseDone);
   const { watchBackgroundJob, isProjectJobRunning } = useBackgroundJob();
   const chapterScope = String(num);
+  const outlineJobRunning = isProjectJobRunning("chapter-outline", id, chapterScope);
+  const outlineBusy = outlineGenerating || outlineJobRunning;
+  const paragraphJobRunning = isProjectJobRunning("format-paragraphs", id, chapterScope);
+  const paragraphsBusy = formattingParagraphs || paragraphJobRunning;
+  const dialogueQuotesJobRunning = isProjectJobRunning("check-dialogue-quotes", id, chapterScope);
+  const dialogueQuotesBusy = checkingDialogueQuotes || dialogueQuotesJobRunning;
 
   function isMining(kind: MineKind) {
     return isProjectJobRunning(MINE_JOB_KIND[kind], id, chapterScope);
@@ -1086,7 +1173,7 @@ export default function ChapterView() {
       });
       setExpandPreview(null);
       setExpandPreviewText("");
-      setChapterPreviewPending(id, num, false);
+      void syncChapterPreviewPendingFromApi(id, num);
       toast(`Kept expansion → ${r.target} (${r.word_count.toLocaleString()} words)`, "success");
       reload();
       if (r.target === "draft") selectStage("draft");
@@ -1117,6 +1204,7 @@ export default function ChapterView() {
   }
 
   async function startFormatParagraphs() {
+    if (paragraphsBusy) return;
     if (!stages || !hasRegenerateSource(stages)) {
       toast("No chapter text to format", "error");
       return;
@@ -1124,19 +1212,34 @@ export default function ChapterView() {
     if (selected === "draft" && draftDirty) await saveDraft();
     if (selected === "revised" && revisedDirty) await saveRevised();
     if (selected === "final" && dirty) await save();
+    const startedProjectId = id;
+    const startedChapter = num;
+    const startedScope = String(startedChapter);
     const source = regenerateSource(stages, selected);
     setFormattingParagraphs(true);
     recordChapterFunction(id, num, "format-paragraphs");
     try {
       const job = await api.formatParagraphs(id, num, { source });
       toast("Formatting paragraphs…", "success");
-      await pollJob(job.job_id);
-      const preview = await api.getParagraphsPreview(id, num);
-      if (!preview) throw new Error("Formatting finished but no preview was saved");
-      setParagraphsPreview(preview);
-      setParagraphsPreviewText(preview.text);
-      setChapterPreviewPending(id, num, true);
-      toast("Paragraph preview ready — review and keep or discard", "success");
+      watchBackgroundJob(job.job_id, {
+        label: "AI Paragraphs",
+        kind: "format-paragraphs",
+        projectId: startedProjectId,
+        scope: startedScope,
+        successMessage: `Chapter ${startedChapter} paragraph preview ready — review and keep or discard`,
+        onSuccess: () => {
+          setChapterPreviewPending(startedProjectId, startedChapter, true);
+          const current = currentChapterRef.current;
+          if (startedProjectId !== current.projectId || startedChapter !== current.chapter) return;
+          void api.getParagraphsPreview(startedProjectId, startedChapter).then((preview) => {
+            if (!preview) return;
+            setParagraphsPreview(preview);
+            setParagraphsPreviewText(preview.text);
+          }).catch((e) => {
+            toast(e instanceof Error ? e.message : String(e), "error");
+          });
+        },
+      });
     } catch (e) {
       toastJobFailure(e);
     } finally {
@@ -1153,7 +1256,7 @@ export default function ChapterView() {
       });
       setParagraphsPreview(null);
       setParagraphsPreviewText("");
-      setChapterPreviewPending(id, num, false);
+      void syncChapterPreviewPendingFromApi(id, num);
       toast(`Kept formatting → ${r.target} (${r.word_count.toLocaleString()} words)`, "success");
       reload();
       if (r.target === "draft") selectStage("draft");
@@ -1178,6 +1281,89 @@ export default function ChapterView() {
       setParagraphsPreviewText("");
       void syncChapterPreviewPendingFromApi(id, num);
       toast("Discarded paragraph preview", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  }
+
+  async function startCheckDialogueQuotes() {
+    if (dialogueQuotesBusy) return;
+    if (!stages || !hasRegenerateSource(stages)) {
+      toast("No chapter text to check", "error");
+      return;
+    }
+    if (selected === "draft" && draftDirty) await saveDraft();
+    if (selected === "revised" && revisedDirty) await saveRevised();
+    if (selected === "final" && dirty) await save();
+    const startedProjectId = id;
+    const startedChapter = num;
+    const startedScope = String(startedChapter);
+    const source = regenerateSource(stages, selected);
+    setCheckingDialogueQuotes(true);
+    recordChapterFunction(id, num, "check-dialogue-quotes");
+    try {
+      const job = await api.checkDialogueQuotes(id, num, { source });
+      toast("Checking dialogue quotes…", "success");
+      watchBackgroundJob(job.job_id, {
+        label: "Check dialogue quotes",
+        kind: "check-dialogue-quotes",
+        projectId: startedProjectId,
+        scope: startedScope,
+        successMessage: `Chapter ${startedChapter} dialogue quote preview ready — review and keep or discard`,
+        onSuccess: () => {
+          setChapterPreviewPending(startedProjectId, startedChapter, true);
+          const current = currentChapterRef.current;
+          if (startedProjectId !== current.projectId || startedChapter !== current.chapter) return;
+          void api.getDialogueQuotesPreview(startedProjectId, startedChapter).then((preview) => {
+            if (!preview) return;
+            setDialogueQuotesPreview(preview);
+            setDialogueQuotesPreviewText(preview.text);
+          }).catch((e) => {
+            toast(e instanceof Error ? e.message : String(e), "error");
+          });
+        },
+      });
+    } catch (e) {
+      toastJobFailure(e);
+    } finally {
+      setCheckingDialogueQuotes(false);
+    }
+  }
+
+  async function applyDialogueQuotesPreview() {
+    if (!dialogueQuotesPreview) return;
+    try {
+      const r = await api.applyDialogueQuotesPreview(id, num, {
+        text: dialogueQuotesPreviewText,
+        target: dialogueQuotesPreview.source,
+      });
+      setDialogueQuotesPreview(null);
+      setDialogueQuotesPreviewText("");
+      void syncChapterPreviewPendingFromApi(id, num);
+      toast(`Kept dialogue quotes → ${r.target} (${r.word_count.toLocaleString()} words)`, "success");
+      reload();
+      if (r.target === "draft") selectStage("draft");
+      else if (r.target === "final") selectStage("final");
+      else selectStage("revised");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  }
+
+  async function discardDialogueQuotesPreview() {
+    const ok = await confirm({
+      title: "Discard dialogue quote preview",
+      message: "Discard this quote-checked preview?",
+      confirmLabel: "Discard",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.discardDialogueQuotesPreview(id, num);
+      setDialogueQuotesPreview(null);
+      setDialogueQuotesPreviewText("");
+      void syncChapterPreviewPendingFromApi(id, num);
+      toast("Discarded dialogue quote preview", "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     }
@@ -1232,10 +1418,11 @@ export default function ChapterView() {
       setAlignmentPreview(null);
       setAlignmentTextA("");
       setAlignmentTextB("");
-      setChapterPreviewPending(id, num, false);
+      void syncChapterPreviewPendingFromApi(id, num);
       toast(
         `Kept alignment → chapters ${r.chapter_a} & ${r.chapter_b} `
-        + `(${r.word_count_a.toLocaleString()} + ${r.word_count_b.toLocaleString()} words)`,
+        + `(${r.word_count_a.toLocaleString()} + ${r.word_count_b.toLocaleString()} words). `
+        + ALIGNMENT_REVIEW_NOTE,
         "success",
       );
       reload();
@@ -1273,7 +1460,7 @@ export default function ChapterView() {
       });
       setRegeneratePreview(null);
       setPreviewText("");
-      setChapterPreviewPending(id, num, false);
+      void syncChapterPreviewPendingFromApi(id, num);
       toast(`Kept regeneration → ${r.target} (${r.word_count.toLocaleString()} words)`, "success");
       reload();
       if (r.target === "draft") selectStage("draft");
@@ -1346,7 +1533,7 @@ export default function ChapterView() {
       const r = await api.applyRedraftPreview(id, num, { text: redraftPreviewText });
       setRedraftPreview(null);
       setRedraftPreviewText("");
-      setChapterPreviewPending(id, num, false);
+      void syncChapterPreviewPendingFromApi(id, num);
       toast(`Kept redraft → ${r.target} (${r.word_count.toLocaleString()} words)`, "success");
       reload();
       selectStage("draft");
@@ -1458,6 +1645,7 @@ export default function ChapterView() {
   }
 
   async function startGenerateOutline(mode: "text" | "notes" = "text") {
+    if (outlineBusy) return;
     if (mode === "text" && (!stages || !hasRegenerateSource(stages))) {
       toast("No chapter text to outline — add draft or final prose first", "error");
       return;
@@ -1480,6 +1668,9 @@ export default function ChapterView() {
       if (selected === "revised" && revisedDirty) await saveRevised();
       if (selected === "final" && dirty) await save();
     }
+    const startedProjectId = id;
+    const startedChapter = num;
+    const startedScope = String(startedChapter);
     const source = mode === "notes" ? "notes" : regenerateSource(stages!, selected);
     setOutlineGenerating(true);
     recordChapterFunction(id, num, mode === "notes" ? "outline-notes" : "outline-text");
@@ -1494,14 +1685,26 @@ export default function ChapterView() {
           : "Generating outline from chapter text…",
         "success",
       );
-      await pollJob(job.job_id);
-      const preview = await api.getOutlinePreview(id, num);
-      if (!preview) throw new Error("Outline generation finished but no preview was saved");
-      setOutlinePreview(preview);
-      setOutlinePreviewText(preview.text);
-      setChapterPreviewPending(id, num, true);
-      toast("Outline ready — review and keep or discard", "success");
-      selectStage("outline");
+      watchBackgroundJob(job.job_id, {
+        label: "Chapter outline",
+        kind: "chapter-outline",
+        projectId: startedProjectId,
+        scope: startedScope,
+        successMessage: `Chapter ${startedChapter} outline ready — review and keep or discard`,
+        onSuccess: () => {
+          setChapterPreviewPending(startedProjectId, startedChapter, true);
+          const current = currentChapterRef.current;
+          if (startedProjectId !== current.projectId || startedChapter !== current.chapter) return;
+          void api.getOutlinePreview(startedProjectId, startedChapter).then((preview) => {
+            if (!preview) return;
+            setOutlinePreview(preview);
+            setOutlinePreviewText(preview.text);
+            selectStage("outline");
+          }).catch((e) => {
+            toast(e instanceof Error ? e.message : String(e), "error");
+          });
+        },
+      });
     } catch (e) {
       toastJobFailure(e);
     } finally {
@@ -1522,7 +1725,7 @@ export default function ChapterView() {
       const r = await api.applyOutlinePreview(id, num, { text: outlinePreviewText });
       setOutlinePreview(null);
       setOutlinePreviewText("");
-      setChapterPreviewPending(id, num, false);
+      void syncChapterPreviewPendingFromApi(id, num);
       toast(`Outline saved (${r.word_count.toLocaleString()} words)`, "success");
       reload();
       selectStage("outline");
@@ -1730,7 +1933,13 @@ export default function ChapterView() {
         <p className="shrink-0 px-3 pb-2 text-[10.5px] font-bold uppercase tracking-[0.16em] text-paper-muted">
           Binder
         </p>
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-4">
+        <div
+          ref={binderScrollRef}
+          onScroll={(event) => {
+            binderScrollTopRef.current = event.currentTarget.scrollTop;
+          }}
+          className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-4"
+        >
           {siblings.map((c) => {
             const isLastAccessed = lastAccessedChapter === c.number;
             const cPreview = hasChapterPreviewPending(id, c.number);
@@ -1763,7 +1972,9 @@ export default function ChapterView() {
               >
                 {c.title || "Untitled"}
               </span>
-              {cPreview && <PendingAiStar title="AI preview ready to review" />}
+              <span className="flex w-3.5 shrink-0 justify-center">
+                {cPreview && <PendingAiStar title="AI preview ready to review" />}
+              </span>
             </Link>
           );})}
         </div>
@@ -1861,7 +2072,7 @@ export default function ChapterView() {
                   splitAtTargetDisabled={
                     isRunning
                     || splittingChapter
-                    || outlineGenerating
+                    || outlineBusy
                     || aligningBoundary
                     || !hasRegenerateSource(stages)
                   }
@@ -1906,12 +2117,20 @@ export default function ChapterView() {
               regenerating={regenerating}
               expanding={expanding}
               redrafting={redrafting}
-              outlineGenerating={outlineGenerating}
+              outlineGenerating={outlineBusy}
               splittingChapter={splittingChapter}
               aligningBoundary={aligningBoundary}
               hasNextChapter={hasNextChapter}
               busy={busy}
-              hasActivePreview={Boolean(regeneratePreview || outlinePreview || expandPreview || paragraphsPreview || alignmentPreview || redraftPreview)}
+              hasActivePreview={Boolean(
+                regeneratePreview
+                || outlinePreview
+                || expandPreview
+                || paragraphsPreview
+                || dialogueQuotesPreview
+                || alignmentPreview
+                || redraftPreview,
+              )}
               regenInstructions={regenInstructions}
               setRegenInstructions={setRegenInstructions}
               applyNotesToOutline={applyNotesToOutline}
@@ -1932,7 +2151,9 @@ export default function ChapterView() {
               onRedraftFromBrief={() => startRedraftFromBrief()}
               onExpandPlaceholders={() => startExpandPlaceholders()}
               onFormatParagraphs={() => void startFormatParagraphs()}
-              formattingParagraphs={formattingParagraphs}
+              formattingParagraphs={paragraphsBusy}
+              onCheckDialogueQuotes={() => void startCheckDialogueQuotes()}
+              checkingDialogueQuotes={dialogueQuotesBusy}
               onAlignBoundary={() => void startAlignBoundary()}
               onRegenerateOutline={(mode) => void startGenerateOutline(mode)}
               onSplitChapter={() => startSplitChapter()}
@@ -2007,6 +2228,22 @@ export default function ChapterView() {
                 }
               />
             )}
+            {dialogueQuotesPreview && (
+              <RegeneratePreviewPanel
+                preview={dialogueQuotesPreview}
+                text={dialogueQuotesPreviewText}
+                onChange={setDialogueQuotesPreviewText}
+                onKeep={applyDialogueQuotesPreview}
+                onDiscard={discardDialogueQuotesPreview}
+                title="Dialogue quote preview"
+                keepLabel={`Keep → ${dialogueQuotesPreview.source}`}
+                description={
+                  `Dialogue quotation marks and broken line-wrap hyphenation only — wording and other punctuation must match the original. `
+                  + `${dialogueQuotesPreview.quote_mark_count ?? 0} quote mark(s) in ${dialogueQuotesPreview.source} prose. `
+                  + "Edit if needed, then keep. Discard if any words changed."
+                }
+              />
+            )}
             {alignmentPreview && (
               <BoundaryAlignmentPreviewPanel
                 preview={alignmentPreview}
@@ -2070,6 +2307,7 @@ export default function ChapterView() {
                 focusAnnotationId={focusAnnotationId}
                 fluidLayout={fluidLayout}
                 showSaveStatus={false}
+                paragraphFormat={paragraphFormat}
               />
             ) : selected === "revised" ? (
               stages.revised == null ? (
@@ -2079,6 +2317,7 @@ export default function ChapterView() {
                   mentionTargets={mentionTargets}
                   projectId={id}
                   onCharacterMentionAction={onCharacterMentionAction}
+                  paragraphFormat={paragraphFormat}
                 />
             ) : (
                 <ManuscriptEditor
@@ -2099,6 +2338,7 @@ export default function ChapterView() {
                   focusAnnotationId={focusAnnotationId}
                   fluidLayout={fluidLayout}
                   showSaveStatus={false}
+                  paragraphFormat={paragraphFormat}
                   headerExtra={
                     <>
                       <p className="mb-2 text-[12px] text-ink-muted">
@@ -2137,6 +2377,7 @@ export default function ChapterView() {
                 focusAnnotationId={focusAnnotationId}
                 fluidLayout={fluidLayout}
                 showSaveStatus={false}
+                paragraphFormat={paragraphFormat}
               />
             ) : (
               stages.outline == null ? (
@@ -2146,6 +2387,7 @@ export default function ChapterView() {
                   mentionTargets={mentionTargets}
                   projectId={id}
                   onCharacterMentionAction={onCharacterMentionAction}
+                  paragraphFormat={paragraphFormat}
                 />
               ) : (
                 <OutlineEditor
@@ -2257,6 +2499,9 @@ function BoundaryAlignmentPreviewPanel({
               ? `Text relocated (${preview.direction?.replace("to_", "") ?? "adjusted"}) — wording must stay identical.`
               : "Boundary already aligned — no text moved."}{" "}
             Run after AI Paragraphs or manual paragraph breaks.
+          </p>
+          <p className="mt-2 text-[12.5px] text-amber-700">
+            {ALIGNMENT_REVIEW_NOTE}
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -2411,7 +2656,7 @@ function OutlineEditor({
 }
 
 function ProvenancePane({
-  stage, text, mentionTargets, projectId, onCharacterMentionAction,
+  stage, text, mentionTargets, projectId, onCharacterMentionAction, paragraphFormat,
 }: {
   stage: StageKey;
   text: string | null;
@@ -2421,6 +2666,7 @@ function ProvenancePane({
     parsed: unknown,
     resolved: MentionTarget,
   ) => void;
+  paragraphFormat?: string;
 }) {
   if (text == null) {
     return (
@@ -2435,16 +2681,17 @@ function ProvenancePane({
     );
   }
   const outline = stage === "outline";
+  const proseClassName = outline ? "prose-outline" : manuscriptProseClassName(paragraphFormat);
   return (
     <article className="rounded-md bg-paper-card px-11 py-12 shadow-[var(--shadow-paper)] ring-1 ring-paper-line">
       <div className="mb-6 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-paper-muted">
         <span className="h-1.5 w-1.5 rounded-full bg-st-approved" />
         Provenance · read-only — the reviewed Final is canonical
       </div>
-      <div className={outline ? "prose-outline" : "prose-manuscript"}>
+      <div className={proseClassName}>
         <MentionMarkdown
           source={text}
-          className={outline ? "prose-outline" : "prose-manuscript"}
+          className={proseClassName}
           mentionTargets={mentionTargets}
           projectId={projectId}
           onCharacterMentionAction={onCharacterMentionAction}

@@ -1,5 +1,7 @@
 import type { ChapterBriefSummary, CharacterSummary, StoryGraphNodeSummary } from "../api/client";
 
+export type ParagraphFormat = "block" | "indented";
+
 export type ProjectStyleDefaults = {
   tone: string;
   point_of_view: string;
@@ -7,6 +9,7 @@ export type ProjectStyleDefaults = {
   prose_style: string;
   vocabulary_level: string;
   description: string;
+  paragraph_format: ParagraphFormat;
   chapter_target_words: number;
 };
 
@@ -17,6 +20,7 @@ export const DEFAULT_PROJECT_STYLE: ProjectStyleDefaults = {
   prose_style: "balanced",
   vocabulary_level: "moderate",
   description: "",
+  paragraph_format: "block",
   chapter_target_words: 2500,
 };
 
@@ -79,6 +83,7 @@ export function stepChapterTargetWords(
 export function projectStyleFromRecord(style?: Record<string, string>): ProjectStyleDefaults {
   const rawTarget = style?.chapter_target_words;
   const parsedTarget = rawTarget ? Number.parseInt(rawTarget, 10) : NaN;
+  const paragraphFormat = style?.paragraph_format === "indented" ? "indented" : "block";
   return {
     tone: style?.tone ?? DEFAULT_PROJECT_STYLE.tone,
     point_of_view: style?.point_of_view ?? DEFAULT_PROJECT_STYLE.point_of_view,
@@ -86,6 +91,7 @@ export function projectStyleFromRecord(style?: Record<string, string>): ProjectS
     prose_style: style?.prose_style ?? DEFAULT_PROJECT_STYLE.prose_style,
     vocabulary_level: style?.vocabulary_level ?? DEFAULT_PROJECT_STYLE.vocabulary_level,
     description: style?.description ?? DEFAULT_PROJECT_STYLE.description,
+    paragraph_format: paragraphFormat,
     chapter_target_words: Number.isFinite(parsedTarget) && parsedTarget > 0
       ? parsedTarget
       : DEFAULT_PROJECT_STYLE.chapter_target_words,
@@ -102,10 +108,8 @@ export function draftWithProjectDefaults(
 
 export function briefFromSummary(brief: ChapterBriefSummary): ChapterBriefDraft {
   const active = [...(brief.active_character_ids ?? [])];
-  const mentionedRaw = [...(brief.mentioned_character_ids ?? [])];
-  const mentioned = mentionedRaw.length > 0
-    ? mentionedRaw
-    : [...active];
+  const activeSet = new Set(active);
+  const mentioned = [...(brief.mentioned_character_ids ?? [])].filter((id) => !activeSet.has(id));
   return {
     pov_character_id: brief.pov_character_id ?? "",
     pov_mode: brief.pov_mode ?? "",
@@ -131,20 +135,19 @@ export function briefFromGeneratedSummary(
   const next = briefFromSummary(generated);
   const hasGeneratedMentioned = (generated.mentioned_character_ids ?? []).length > 0;
   if (!hasGeneratedMentioned && existingDraft.mentioned_character_ids.length > 0) {
+    const activeSet = new Set(next.active_character_ids);
     return {
       ...next,
-      mentioned_character_ids: [...existingDraft.mentioned_character_ids],
+      mentioned_character_ids: existingDraft.mentioned_character_ids.filter((id) => !activeSet.has(id)),
     };
   }
   return next;
 }
 
 export function briefToPayload(draft: ChapterBriefDraft) {
-  const mentioned = [...draft.mentioned_character_ids];
   const active = [...draft.active_character_ids];
-  for (const id of active) {
-    if (!mentioned.includes(id)) mentioned.push(id);
-  }
+  const activeSet = new Set(active);
+  const mentioned = draft.mentioned_character_ids.filter((id) => !activeSet.has(id));
   return {
     pov_character_id: draft.pov_character_id,
     pov_mode: draft.pov_mode,
@@ -175,7 +178,7 @@ export function setCharacterPresence(
 ): ChapterBriefDraft {
   const mentioned = draft.mentioned_character_ids.filter((id) => id !== characterId);
   const active = draft.active_character_ids.filter((id) => id !== characterId);
-  if (presence === "mentioned" || presence === "active") {
+  if (presence === "mentioned") {
     mentioned.push(characterId);
   }
   if (presence === "active") {
@@ -189,12 +192,9 @@ export function promoteCharacterToActive(draft: ChapterBriefDraft, characterId: 
 }
 
 export function demoteCharacterFromActive(draft: ChapterBriefDraft, characterId: string): ChapterBriefDraft {
-  const mentioned = draft.mentioned_character_ids.includes(characterId)
-    ? [...draft.mentioned_character_ids]
-    : [...draft.mentioned_character_ids, characterId];
   return {
     ...draft,
-    mentioned_character_ids: mentioned,
+    mentioned_character_ids: draft.mentioned_character_ids.filter((id) => id !== characterId),
     active_character_ids: draft.active_character_ids.filter((id) => id !== characterId),
   };
 }
@@ -247,7 +247,7 @@ export const SAMPLE_CHAPTER_BRIEF: ChapterBriefSummary = {
   vocabulary_level: "moderate",
   style_notes: "Short sentences under stress.",
   target_word_count: 2800,
-  mentioned_character_ids: ["char_a", "char_b"],
+  mentioned_character_ids: [],
   active_character_ids: ["char_a", "char_b"],
   active_node_ids: ["sg_main", "sg_sub2"],
   continuity_notes: "Alice still has the keycard from ch. 2.",

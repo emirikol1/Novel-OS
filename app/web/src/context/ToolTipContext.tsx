@@ -16,6 +16,7 @@ type Token = number;
 
 type ToolTipContextValue = {
   activeId: ToolTipId | null;
+  activeToken: Token | null;
   scheduleActive: (id: ToolTipId, token: Token) => void;
   clearActive: (token: Token) => void;
   scheduleDismiss: (token: Token) => void;
@@ -35,6 +36,7 @@ export function useToolTipToken(): Token {
 
 export function ToolTipProvider({ children }: { children: ReactNode }) {
   const [activeId, setActiveId] = useState<ToolTipId | null>(null);
+  const [activeToken, setActiveToken] = useState<Token | null>(null);
   const showDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dismissDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<{ id: ToolTipId; token: Token } | null>(null);
@@ -62,6 +64,7 @@ export function ToolTipProvider({ children }: { children: ReactNode }) {
       showDelayRef.current = setTimeout(() => {
         if (pendingRef.current?.token === token) {
           activeTokenRef.current = token;
+          setActiveToken(token);
           setActiveId(id);
         }
       }, HOVER_DELAY_MS);
@@ -76,6 +79,7 @@ export function ToolTipProvider({ children }: { children: ReactNode }) {
       if (pendingRef.current?.token === token) pendingRef.current = null;
       if (activeTokenRef.current === token) {
         activeTokenRef.current = null;
+        setActiveToken(null);
         setActiveId(null);
       }
     },
@@ -91,6 +95,7 @@ export function ToolTipProvider({ children }: { children: ReactNode }) {
       dismissDelayRef.current = setTimeout(() => {
         if (activeTokenRef.current === token) {
           activeTokenRef.current = null;
+          setActiveToken(null);
           setActiveId(null);
         }
       }, DISMISS_DELAY_MS);
@@ -117,7 +122,15 @@ export function ToolTipProvider({ children }: { children: ReactNode }) {
 
   return (
     <ToolTipContext.Provider
-      value={{ activeId, scheduleActive, clearActive, scheduleDismiss, scheduleDismissActive, holdActive }}
+      value={{
+        activeId,
+        activeToken,
+        scheduleActive,
+        clearActive,
+        scheduleDismiss,
+        scheduleDismissActive,
+        holdActive,
+      }}
     >
       {children}
     </ToolTipContext.Provider>
@@ -126,6 +139,7 @@ export function ToolTipProvider({ children }: { children: ReactNode }) {
 
 const noopContext: ToolTipContextValue = {
   activeId: null,
+  activeToken: null,
   scheduleActive: () => {},
   clearActive: () => {},
   scheduleDismiss: () => {},
