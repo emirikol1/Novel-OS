@@ -55,6 +55,8 @@ def _humanize_apply_line(kind: str, line: str) -> str:
     if kind == "characters":
         if "new character" in low:
             return "Add a new cast member."
+        if "relationship to" in low:
+            return "Add or update a character relationship label."
         if "character update" in low or ": " in line:
             return "Update an existing character profile field."
     if kind == "bible":
@@ -118,6 +120,10 @@ def _proposed_from_parsed(kind: str, parsed: dict[str, Any]) -> list[str]:
             out.append(f"New character: {str(raw).split('|')[0].strip()}")
         for raw in parsed.get("character_updates") or []:
             out.append(f"Character update: {str(raw).strip()}")
+        for raw in parsed.get("relationship_updates") or []:
+            parts = [p.strip() for p in str(raw).split("|")]
+            if len(parts) >= 3:
+                out.append(f"Relationship: {parts[0]} → {parts[2]} ({parts[1]})")
     elif kind == "bible":
         for raw in parsed.get("world_facts") or []:
             out.append(f"World fact: {str(raw).strip()}")

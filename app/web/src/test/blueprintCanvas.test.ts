@@ -129,7 +129,7 @@ describe("blueprintCanvas", () => {
       "The Heist",
     ]);
     expect(display?.activeCharacterNames).toEqual(["Alice", "Bob"]);
-    expect(display?.requiredBeatsSummary).toMatch(/Alice discovers/);
+    expect(display?.requiredBeatsSummary).toBeNull();
   });
 
   it("enriches blueprint lanes with brief assignments", () => {

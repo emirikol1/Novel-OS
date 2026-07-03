@@ -28,6 +28,12 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from log_redaction import size_ref
+from relationship_roles import (
+    inverse_relationship_label,
+    parse_relationship_label,
+    relationship_label_key,
+    stringify_relationship_label,
+)
 
 if TYPE_CHECKING:
     from state_manager import PlotThread, StoryState
@@ -441,6 +447,43 @@ def _parse_pipe_fields(item: str, min_parts: int) -> Optional[List[str]]:
     return parts
 
 
+def _normalize_relationship_label(label: str, note: str = "") -> str:
+    label = (label or "").strip()
+    note = (note or "").strip()
+    parsed = parse_relationship_label(label)
+    if parsed.role:
+        return stringify_relationship_label(parsed.role, parsed.subrole, note or parsed.note)
+    if note:
+        return f"{label}: {note}" if label else note
+    return label
+
+
+def _merge_relationship_label(existing: str, label: str) -> str:
+    existing = (existing or "").strip()
+    label = (label or "").strip()
+    if not existing:
+        return label
+    if not label:
+        return existing
+    existing_parsed = parse_relationship_label(existing)
+    label_parsed = parse_relationship_label(label)
+    if existing_parsed.role and existing_parsed.role == label_parsed.role:
+        existing_display_key = relationship_label_key(existing_parsed.display_label)
+        label_display_key = relationship_label_key(label_parsed.display_label)
+        if existing_display_key == label_display_key:
+            return existing
+        role_key = relationship_label_key(existing_parsed.role)
+        if existing_display_key == role_key and label_display_key != role_key:
+            return label
+        if label_display_key == role_key:
+            return existing
+    existing_key = relationship_label_key(existing)
+    label_key = relationship_label_key(label)
+    if not label_key or label_key in existing_key:
+        return existing
+    return f"{existing}; {label}"
+
+
 def apply_import_to_state(
     state: "StoryState",
     chapter_number: int,
@@ -448,7 +491,7 @@ def apply_import_to_state(
     source: str = "archivist",
 ) -> List[str]:
     """Apply [IMPORT_STATE_UPDATE] fields — creates characters/plot threads as needed."""
-    from state_manager import Character, PlotThread  # noqa: WPS433 — runtime import avoids cycle
+    from state_manager import Character  # noqa: WPS433 — runtime import avoids cycle
 
     log: List[str] = []
     chapter = state.get_chapter(chapter_number) or state.create_chapter(chapter_number)
@@ -700,7 +743,7 @@ def _apply_character_import(
     source: str,
     log: List[str],
 ) -> None:
-    from state_manager import Character, PlotThread  # noqa: WPS433
+    from state_manager import Character  # noqa: WPS433
 
     for raw in _as_list(parsed.get("new_characters")):
         parts = _parse_pipe_fields(raw, 2)
@@ -778,6 +821,44 @@ def _apply_character_import(
                 continue
             _CHAR_FIELDS[field](cid, val, state, chapter_number)
             log.append(f"[{source}] {cid}: {field} updated")
+
+    for raw in _as_list(parsed.get("relationship_updates")):
+        parts = _parse_pipe_fields(raw, 3)
+        if not parts:
+            log.append(f"[{source}] skipped malformed Relationship_Updates line ({size_ref(raw)})")
+            continue
+        source_name, label, target_name = parts[0], parts[1], parts[2]
+        note = parts[3] if len(parts) > 3 else ""
+        clean_note = note.strip()
+        if clean_note.lower() in _PLACEHOLDER:
+            clean_note = ""
+        rel_label = _normalize_relationship_label(label, clean_note)
+        if not rel_label:
+            continue
+        source_id = _resolve_character_id(state, source_name)
+        target_id = _resolve_character_id(state, target_name)
+        if not source_id or not target_id:
+            log.append(f"[{source}] relationship skipped for unknown character ({size_ref(raw)})")
+            continue
+        if source_id == target_id:
+            continue
+        source_char = state.characters[source_id]
+        source_char.relationships = dict(source_char.relationships or {})
+        before = source_char.relationships.get(target_id, "")
+        after = _merge_relationship_label(before, rel_label)
+        if after != before:
+            source_char.relationships[target_id] = after
+            log.append(f"[{source}] {source_id}: relationship to {target_id} updated")
+
+        inverse = inverse_relationship_label(label)
+        if inverse:
+            target_char = state.characters[target_id]
+            target_char.relationships = dict(target_char.relationships or {})
+            before_inverse = target_char.relationships.get(source_id, "")
+            after_inverse = _merge_relationship_label(before_inverse, inverse)
+            if after_inverse != before_inverse:
+                target_char.relationships[source_id] = after_inverse
+                log.append(f"[{source}] {target_id}: relationship to {source_id} updated")
 
 
 def _append_subplot_beat(
@@ -953,7 +1034,7 @@ def _apply_plot_import(
 
     for raw in _as_list(parsed.get("subplot_threads")):
         parts = _parse_pipe_fields(raw, 2)
-        if len(parts) < 2:
+        if not parts:
             log.append(f"[{source}] skipped malformed Subplot_Threads line ({size_ref(raw)})")
             continue
         parent_name, sub_name = parts[0], parts[1]
@@ -963,7 +1044,6 @@ def _apply_plot_import(
             log.append(f"[{source}] no parent plot ({size_ref(parent_name)})")
             continue
         parent = state.plot_threads[parent_id]
-        from entity_dedup import format_subplot_line
         line = format_subplot_line(sub_name, sub_desc)
         _append_subplot_line(parent, line, source=source, log=log, label=parent.name, state=state)
         parent.last_updated_chapter = max(parent.last_updated_chapter, chapter_number)
@@ -1024,17 +1104,17 @@ def _apply_plot_import(
                 start_chapter=chapter_number,
                 last_updated_chapter=chapter_number,
                 related_characters=[
-                    _resolve_character_id(state, rn)
+                    cid
                     for rn in related
-                    if _resolve_character_id(state, rn)
+                    if (cid := _resolve_character_id(state, rn))
                 ],
             )
             state.add_plot_thread(thread)
             log.append(f"[{source}] new plot thread: {tid} (name: {size_ref(name)})")
 
     for raw in _as_list(parsed.get("subplot_beats")):
-        parts = _parse_pipe_fields(raw, 1)
-        if len(parts) < 2:
+        parts = _parse_pipe_fields(raw, 2)
+        if not parts:
             log.append(f"[{source}] skipped malformed Subplot_Beats line ({size_ref(raw)})")
             continue
         _append_subplot_beat(state, parts[0], parts[1], source=source, log=log)
@@ -1062,7 +1142,7 @@ def _apply_plot_lifespan_updates(
 ) -> None:
     for raw in _as_list(parsed.get("plot_lifespan_updates")):
         parts = _parse_pipe_fields(raw, 2)
-        if len(parts) < 2:
+        if not parts:
             log.append(f"[{source}] skipped malformed Plot_Lifespan_Updates line ({size_ref(raw)})")
             continue
         title = parts[0]
@@ -1118,7 +1198,7 @@ def apply_chapter_character_mine(
     source: str = "mine_characters",
 ) -> List[str]:
     log: List[str] = []
-    apply_to_state(state, chapter_number, parsed, source=source)
+    log.extend(apply_to_state(state, chapter_number, parsed, source=source))
     _apply_character_import(state, parsed, chapter_number, source, log)
     return log
 

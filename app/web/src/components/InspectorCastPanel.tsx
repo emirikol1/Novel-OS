@@ -5,6 +5,7 @@ import {
   type CharacterDetail,
   type CharacterSummary,
 } from "../api/client";
+import { displayRelationshipLabel } from "../lib/characterRelationships";
 
 const ROLE_COLOR: Record<string, string> = {
   protagonist: "#c98a16",
@@ -116,7 +117,7 @@ function CharacterDetailView({
     if (!detail?.relationships) return [];
     return Object.entries(detail.relationships).map(([targetId, label]) => ({
       targetId,
-      label,
+      label: displayRelationshipLabel(label),
       targetName: nameById.get(targetId) ?? targetId,
     }));
   }, [detail?.relationships, nameById]);

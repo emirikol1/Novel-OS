@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass, field, asdict, fields
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from relationship_roles import display_relationship_label
+
 if TYPE_CHECKING:
     from state_manager import ChapterState, StoryState
 
@@ -41,7 +43,7 @@ class StoryGraphLayout:
 
 @dataclass
 class ChapterBeat:
-    """Consolidated chapter beat (replaces required/landed string lists over time)."""
+    """Chapter-local beat row used by planning, prompts, and landed-beat review."""
     id: str
     title: str
     summary: str = ""
@@ -221,7 +223,7 @@ def validate_brief_active_nodes(
 
 
 def sync_chapter_pins_for_brief(state: "StoryState", brief: ChapterBrief) -> None:
-    """Mirror brief.active_node_ids onto node.chapter_pins for this chapter."""
+    """Treat the brief as authoritative and mirror its active nodes onto all node pins."""
     chapter_number = brief.chapter_number
     active = {(nid or "").strip() for nid in (brief.active_node_ids or []) if (nid or "").strip()}
     for node in state.story_graph_nodes.values():
@@ -241,7 +243,7 @@ def sync_brief_active_from_pin(
     *,
     pinned: bool,
 ) -> None:
-    """Toggle pin: update node.chapter_pins and brief.active_node_ids."""
+    """Treat one node pin toggle as authoritative and mirror it back to the brief."""
     node = state.story_graph_nodes.get(node_id)
     if node is None:
         return
@@ -358,12 +360,25 @@ def _format_character_brief_line(state: "StoryState", character_id: str) -> str:
     char = state.characters.get(cid)
     if not char:
         return f"- [unknown character id: {cid}]"
-    return (
+    line = (
         f"- **{char.full_name}** ({char.role}) — "
         f"location: {char.current_location or 'Unknown'}, "
         f"emotion: {char.emotional_state or 'Unknown'}, "
         f"arc: {char.arc_stage} ({char.arc_progress}%)"
     )
+    relationships = []
+    for other_id, label in (char.relationships or {}).items():
+        other = state.characters.get(other_id)
+        if not other:
+            continue
+        display = display_relationship_label(label)
+        if display:
+            relationships.append(f"{other.full_name}: {display}")
+    if relationships:
+        line += f", relationships: {'; '.join(relationships[:6])}"
+        if len(relationships) > 6:
+            line += f" (+{len(relationships) - 6} more)"
+    return line
 
 
 def _format_story_graph_node_line(state: "StoryState", node_id: str) -> str:
@@ -478,25 +493,7 @@ def format_chapter_brief_prompt_context(
     chapter_beats = beats_for_prompt(state, brief.chapter_number, brief)
     beats_block = format_chapter_beats_section(chapter_beats, include_status=True, state=state)
     if beats_block:
-        legacy_required = [b.strip() for b in (brief.required_beats or []) if (b or "").strip()]
-        legacy_landed = [b.strip() for b in (brief.landed_beats or []) if (b or "").strip()]
-        if legacy_required or legacy_landed:
-            beats_block += (
-                "\n\n_(Legacy required/landed string fields still present — prefer Chapter Beats above.)_"
-            )
         sections.append(beats_block)
-    else:
-        beats = [b.strip() for b in (brief.required_beats or []) if (b or "").strip()]
-        if beats:
-            sections.append("### Required Beats\n" + "\n".join(f"- {b}" for b in beats))
-
-        landed = [b.strip() for b in (brief.landed_beats or []) if (b or "").strip()]
-        if landed:
-            sections.append(
-                "### Landed Beats From Existing Text\n"
-                "Chapter-local events only; not durable Story Bible canon unless separately promoted.\n"
-                + "\n".join(f"- {b}" for b in landed)
-            )
 
     notes = (brief.continuity_notes or "").strip()
     if notes:
@@ -659,7 +656,7 @@ def migrate_plot_threads_to_graph(state: "StoryState", *, force: bool = False) -
                     source_id=char.id,
                     target_id=other_id,
                     kind="character_relationship",
-                    label=(rel_label or "").strip(),
+                    label=display_relationship_label(rel_label),
                 )
                 edges_created += 1
 

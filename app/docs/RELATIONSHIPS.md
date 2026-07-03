@@ -1,8 +1,16 @@
 # Character Relationships & Genealogy
 
-Features **10** (relationship graph) and **11** (family tree) visualize cast links from `Character.relationships` — a `Dict[character_id, label]` on each character in StoryState. Labels are edited in the **Cast** character editor; the graph and tree are read-mostly views with navigation back to the editor.
+Features **10** (relationship graph) and **11** (family tree) visualize cast links from `Character.relationships` — a `Dict[character_id, label]` on each character in StoryState. Labels are edited in the **Cast** character editor; the relationship graph also supports layout and lightweight character linking. The family tree remains a derived navigation view.
 
-**Important:** Relationship data is **free-text labels keyed by character ID**. There is no separate edge table. Family tree layout uses **heuristic label classification** (mother, child, spouse, etc.) — ambiguous or custom labels may not appear in the genealogy view.
+**Important:** Relationship data is still stored in the existing string map keyed by character ID. Canonical role/subrole labels are encoded into that string, not a separate edge table. Family tree layout uses **heuristic label classification** (mother, child, spouse, etc.) — ambiguous or custom labels may not appear in the genealogy view.
+
+The relationship model is **canonical role + optional subrole**:
+
+- The **canonical role** drives grouping, inverse mapping, family-tree traversal, graph logic, miner normalization, and AI prompt consistency.
+- The **subrole** is what users see and what writing prompts should use.
+- The subrole defaults to the canonical role label.
+- Every alias/example under a canonical role is a valid subrole.
+- Custom subroles remain supported as free text.
 
 ---
 
@@ -18,8 +26,9 @@ Features **10** (relationship graph) and **11** (family tree) visualize cast lin
 ### Relationship graph (Feature 10)
 
 1. Open **Relationships** tab.
-2. View a circular SVG graph: nodes = characters with at least one link; edges = directed arrows with labels.
-3. Hover an edge to emphasize it; click a node to open that character in the Cast editor.
+2. View an SVG graph: nodes = characters with at least one link; edges = directed arrows with labels.
+3. Drag nodes to arrange the layout, link characters from the panel, and hover an edge to emphasize it.
+4. Click a node to open that character in the Cast editor.
 
 ### Genealogy / family tree (Feature 11)
 
@@ -38,9 +47,36 @@ flowchart LR
     Cast -->|"add/edit labels"| State
     State --> Graph
     State --> Tree
+    Graph -->|"link characters / save layout"| State
     Graph -->|"click node"| Cast
     Tree -->|"click name"| Cast
 ```
+
+---
+
+## Role/subrole taxonomy
+
+Relationship mining and UI suggestions should prefer these canonical roles. The labels in the alias/subrole column are examples of display subroles, not a closed list.
+
+| Category | Canonical role pair | Alias/subrole examples | Usage |
+|---|---|---|---|
+| Family origin | `parent` / `child` | mother, father, son, daughter | Primary family-tree edges. |
+| Family peer | `sibling` | brother, sister, twin | Peer family links. |
+| Romantic | `lover` / `spouse` / `ex` | spouse, lover, ex-spouse, ex-lover | Use only when the relationship is established by context. |
+| Social positive | `friend` / `ally` | best friend, teammate, accomplice | Broad positive/social alignment. |
+| Social negative | `rival` / `enemy` | nemesis, adversary | Rival and enemy remain distinct. |
+| Teaching | `teacher` / `student` | mentor, apprentice | Teacher/student is primary; mentor is a subrole. |
+| Care/dependency | `caretaker` / `dependent` | guardian, ward | Care responsibility without implying family origin. |
+| Work/authority | `employer` / `employee` | boss, manager, subordinate | Work hierarchy. |
+| Household/service authority | `household master` / `servant` | master of house, domestic servant | Qualified household/service role. Use `household master` when plain `master` would be ambiguous. |
+| Professional service | `provider` / `client` | doctor/patient, lawyer/client, therapist/patient | Professional care/service relationship. |
+| Institutional command | `commander` / `subordinate` | officer/soldier, ruler/subject | Military, political, or institutional hierarchy. |
+| Captivity/coercion | `captor` / `prisoner` | jailer, hostage, coercive master/servant, blackmailer/victim | Coercive power or confinement. |
+| Consensual power dynamic | `dominant` / `submissive` | dom, sub | Separate from household service and captivity/coercion. |
+
+Extended family relationships such as grandparent, cousin, aunt/uncle, and in-law should usually be **derived from family-tree traversal** through parent/child/spouse edges, not stored as predefined direct relationship labels.
+
+Ambiguous labels should stay custom/free text unless context qualifies them. In particular, bare `partner` or `master` should not be auto-normalized without a qualifier.
 
 ---
 
@@ -53,7 +89,7 @@ flowchart LR
 | `parent` | parent, mother, father, mom, dad |
 | `child` | child, son, daughter |
 | `sibling` | sibling, brother, sister, twin |
-| `spouse` | spouse, husband, wife, partner, fiancé |
+| `spouse` | spouse, husband, wife |
 | `guardian` | guardian, ward |
 | `adopted` | adopted, adoptive, foster |
 
@@ -65,9 +101,9 @@ Directed edges on the graph reflect how each character stores the link (`fromId`
 
 ## Functional boundaries
 
-- **Lightweight editing** in the character modal only — no drag-to-connect on the graph.
+- **Lightweight editing** in the character modal and relationship graph; data still lands in `Character.relationships`.
 - **Does not** feed Guardian continuity checks (e.g. estranged vs close) in this pass.
-- **Does not** auto-create edges from mention intelligence or mining.
+- Relationship mining may propose character relationship updates for review/apply.
 - **Stored** in `story_state.json` → included in project package via `outputs/state/`.
 
 ---

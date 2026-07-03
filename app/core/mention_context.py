@@ -13,6 +13,7 @@ from mentions import (
     resolve_mentions_in_text,
     text_has_mentions,
 )
+from relationship_roles import display_relationship_label
 
 if TYPE_CHECKING:
     from state_manager import StoryState, Character
@@ -31,6 +32,16 @@ def _char_card(char: "Character", *, critical_notes: List[str]) -> str:
         if len(char.knowledge) > 6:
             know += f" (+{len(char.knowledge) - 6} more)"
         lines.append(f"- Knows: {know}")
+    relationships = [
+        f"{target_id}: {display_relationship_label(label)}"
+        for target_id, label in (char.relationships or {}).items()
+        if display_relationship_label(label)
+    ]
+    if relationships:
+        rels = "; ".join(relationships[:6])
+        if len(relationships) > 6:
+            rels += f" (+{len(relationships) - 6} more)"
+        lines.append(f"- Relationships: {rels}")
     if char.notes.strip():
         note = char.notes.strip()
         if len(note) > 160:

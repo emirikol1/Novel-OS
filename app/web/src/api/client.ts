@@ -432,20 +432,11 @@ export interface ChapterBriefSummary {
   active_character_ids: string[];
   mentioned_character_ids?: string[];
   active_node_ids: string[];
-  required_beats: string[];
-  landed_beats: string[];
   continuity_notes: string;
   ending_hook: string;
 }
 
-export type SaveChapterBriefPayload = Omit<
-  ChapterBriefSummary,
-  "chapter_number" | "required_beats" | "landed_beats"
-> & {
-  /** Legacy brief beat lists — chapter beats live in chapter_beats (Structure V2). */
-  required_beats?: string[];
-  landed_beats?: string[];
-};
+export type SaveChapterBriefPayload = Omit<ChapterBriefSummary, "chapter_number">;
 
 export type ChapterContextPreviewMode = "outline" | "draft" | "revise" | "validation";
 
@@ -469,12 +460,21 @@ export interface ContextPreviewCharacter {
   name: string;
 }
 
+export interface ContextPreviewBeat {
+  id: string;
+  title: string;
+  status: "planned" | "landed" | string;
+  summary: string;
+}
+
 export interface ChapterContextPreview {
   chapter_number: number;
   mode: string;
   bible: ContextPreviewSection;
   graph: ContextPreviewSection;
   active_characters: ContextPreviewCharacter[];
+  mentioned_characters?: ContextPreviewCharacter[];
+  beats: ContextPreviewBeat[];
 }
 
 export interface ChapterBeatCandidate {

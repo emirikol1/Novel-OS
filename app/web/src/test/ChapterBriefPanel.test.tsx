@@ -14,11 +14,6 @@ const CHARS = [
   { id: "char_b", full_name: "Bob", role: "antagonist" },
 ];
 
-const BRIEF_WITH_LANDED = {
-  ...SAMPLE_CHAPTER_BRIEF,
-  landed_beats: ["Hero finds the hidden map", "Vault alarm triggered"],
-};
-
 beforeEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
@@ -214,29 +209,25 @@ test("removing graph focus chip updates active_node_ids on save", async () => {
   expect(save.mock.calls[0]?.[2]?.active_node_ids).toEqual(["sg_main"]);
 });
 
-test("generate brief does not populate legacy beat fields in brief form", async () => {
-  vi.spyOn(client.api, "getChapterBrief").mockResolvedValue(BRIEF_WITH_LANDED);
-  vi.spyOn(client.api, "listChapterBeats").mockResolvedValue([
+test("generate brief refreshes the beat board", async () => {
+  vi.spyOn(client.api, "getChapterBrief").mockResolvedValue(SAMPLE_CHAPTER_BRIEF);
+  let generated = false;
+  const generatedBeats = [
     {
       id: "beat_3_001",
       title: "Hero finds the hidden map",
       summary: "",
       sort_order: 0,
-      status: "landed",
+      status: "planned" as const,
       linked_node_ids: [],
     },
-    {
-      id: "beat_3_002",
-      title: "Vault alarm triggered",
-      summary: "",
-      sort_order: 1,
-      status: "landed",
-      linked_node_ids: [],
-    },
-  ]);
-  vi.spyOn(client.api, "generateChapterBrief").mockResolvedValue({
-    ...SAMPLE_CHAPTER_BRIEF,
-    landed_beats: [],
+  ];
+  const listBeats = vi.spyOn(client.api, "listChapterBeats").mockImplementation(async () => (
+    generated ? generatedBeats : []
+  ));
+  vi.spyOn(client.api, "generateChapterBrief").mockImplementation(async () => {
+    generated = true;
+    return SAMPLE_CHAPTER_BRIEF;
   });
   const user = userEvent.setup();
   render(
@@ -246,16 +237,13 @@ test("generate brief does not populate legacy beat fields in brief form", async 
   );
   await screen.findByText(/Chapter Brief/i);
   await user.click(screen.getByRole("button", { name: /Chapter Brief/i }));
-  await waitFor(() => {
-    expect(screen.getByDisplayValue("Hero finds the hidden map")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Vault alarm triggered")).toBeInTheDocument();
-  });
 
   await user.click(screen.getByRole("button", { name: /Generate brief/i }));
 
   await waitFor(() => {
     expect(screen.getByDisplayValue(/vault door opens/i)).toBeInTheDocument();
   });
+  await waitFor(() => expect(listBeats.mock.calls.length).toBeGreaterThan(1));
   expect(screen.getByDisplayValue("Hero finds the hidden map")).toBeInTheDocument();
 });
 
@@ -310,7 +298,7 @@ test("extracts landed beats via candidate review and apply", async () => {
   ));
   const apply = vi.spyOn(client.api, "applyChapterBeatCandidates").mockImplementation(async () => {
     reloadAfterApply = true;
-    return BRIEF_WITH_LANDED;
+    return SAMPLE_CHAPTER_BRIEF;
   });
   const user = userEvent.setup();
   render(
@@ -346,7 +334,7 @@ test("allows applying landed beats when preview is ready but async job still app
   const projectId = "stale-running-p";
   setChapterPreviewPending(projectId, 3, true);
   vi.spyOn(client.api, "getChapterBeatCandidatesPreview").mockResolvedValue(MOCK_BEAT_CANDIDATES);
-  const apply = vi.spyOn(client.api, "applyChapterBeatCandidates").mockResolvedValue(BRIEF_WITH_LANDED);
+  const apply = vi.spyOn(client.api, "applyChapterBeatCandidates").mockResolvedValue(SAMPLE_CHAPTER_BRIEF);
   const interval = vi.spyOn(window, "setInterval").mockImplementation(() => 1);
   watchBackgroundJob("stale-job", {
     label: "Landed beats extraction",
@@ -454,6 +442,14 @@ test("opens context preview and shows included items, reasons, and omissions", a
       { id: "char_a", name: "Alice" },
       { id: "char_b", name: "Bob" },
     ],
+    beats: [
+      {
+        id: "beat_3_001",
+        title: "Hero finds the hidden map",
+        status: "planned",
+        summary: "Sets up the vault sequence",
+      },
+    ],
   });
   const user = userEvent.setup();
   render(
@@ -474,6 +470,8 @@ test("opens context preview and shows included items, reasons, and omissions", a
   expect(within(dialog).getByText(/Themes/i)).toBeInTheDocument();
   expect(within(dialog).getByText(/Not included:.*Vault alarm subplot/i)).toBeInTheDocument();
   expect(within(dialog).getByText(/Alice, Bob/i)).toBeInTheDocument();
+  expect(within(dialog).getByText(/Chapter beats/i)).toBeInTheDocument();
+  expect(within(dialog).getByText(/Hero finds the hidden map/i)).toBeInTheDocument();
 });
 
 test("character triple toggle cycles silver then gold and saves mentioned superset", async () => {

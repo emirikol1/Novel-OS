@@ -250,8 +250,6 @@ export const SAMPLE_CHAPTER_BRIEF: ChapterBriefSummary = {
   mentioned_character_ids: ["char_a", "char_b"],
   active_character_ids: ["char_a", "char_b"],
   active_node_ids: ["sg_main", "sg_sub2"],
-  required_beats: ["Alice discovers the alarm code", "Bob hints at betrayal"],
-  landed_beats: ["Vault alarm triggered"],
   continuity_notes: "Alice still has the keycard from ch. 2.",
   ending_hook: "The vault door opens — but someone is already inside.",
 };

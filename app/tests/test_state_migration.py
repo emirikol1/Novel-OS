@@ -185,7 +185,7 @@ def test_migrate_raw_story_state_json_idempotent():
 
 def test_full_v1_fixture_end_to_end(tmp_path):
     project_dir = tmp_path / "v1-full"
-    _write_legacy_state(project_dir)
+    state_file = _write_legacy_state(project_dir)
 
     state = StoryState(str(project_dir), persist_migration=True, auto_migrate=False)
     result = migrate_story_state(state)
@@ -218,6 +218,9 @@ def test_full_v1_fixture_end_to_end(tmp_path):
     assert beats1[1].status == "landed"
 
     state.save_state()
+    saved = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "required_beats" not in saved["chapter_briefs"]["1"]
+    assert "landed_beats" not in saved["chapter_briefs"]["1"]
     again = StoryState(str(project_dir), persist_migration=True)
     assert again.schema_version == CURRENT_SCHEMA_VERSION
     assert len(again.story_graph_nodes) == len(state.story_graph_nodes)
@@ -238,8 +241,8 @@ def test_migrate_idempotent_double_run_in_memory(tmp_path):
     assert len(state.chapter_beats.get(1, [])) == beat_count
 
 
-def test_migrate_skips_beats_when_chapter_beats_populated(tmp_path):
-    project_dir = tmp_path / "v1-beats-skip"
+def test_migrate_merges_old_brief_beats_when_chapter_beats_populated(tmp_path):
+    project_dir = tmp_path / "v1-beats-merge"
     _write_legacy_state(
         project_dir,
         extra={
@@ -259,8 +262,10 @@ def test_migrate_skips_beats_when_chapter_beats_populated(tmp_path):
     )
     state = StoryState(str(project_dir), auto_migrate=False)
     migrate_story_state(state)
-    assert len(state.chapter_beats[1]) == 1
-    assert state.chapter_beats[1][0].title == "Existing beat"
+    titles = [beat.title for beat in state.chapter_beats[1]]
+    assert titles == ["Existing beat", "Open the gate", "Hero arrives"]
+    assert state.chapter_briefs[1].required_beats == []
+    assert state.chapter_briefs[1].landed_beats == []
 
 
 def test_sync_chapter_pins_additive_from_briefs(tmp_path):

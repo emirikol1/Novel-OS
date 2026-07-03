@@ -12,6 +12,12 @@ import { useToast } from "./Toaster";
 import { reassignChapterPreviewPending } from "../lib/chapterPreviewPending";
 import { reassignChapterWorkflowMarker } from "../lib/chapterWorkflow";
 import { isJobCancelledError, pollJob } from "../lib/jobPolling";
+import {
+  CANONICAL_RELATIONSHIP_ROLES,
+  RELATIONSHIP_SUBROLE_SUGGESTIONS,
+  parseRelationshipLabel,
+  stringifyRelationshipLabel,
+} from "../lib/characterRelationships";
 
 const ROLES = ["protagonist", "antagonist", "supporting", "minor"];
 const THREAD_TYPES = ["main", "subplot", "character_arc", "mystery"];
@@ -202,6 +208,7 @@ export function CharacterEditorModal({
   const [aliasesText, setAliasesText] = useState("");
   const [relationships, setRelationships] = useState<Record<string, string>>({});
   const [newRelTarget, setNewRelTarget] = useState("");
+  const [newRelRole, setNewRelRole] = useState("");
   const [newRelLabel, setNewRelLabel] = useState("");
   const [genPrompt, setGenPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -300,6 +307,13 @@ export function CharacterEditorModal({
     queueSave();
   }
 
+  function setRelationshipParts(targetId: string, role: string, label: string) {
+    const value = role
+      ? stringifyRelationshipLabel(role, label.trim() || role)
+      : label.trim();
+    setRelationshipTarget(targetId, value);
+  }
+
   function removeRelationship(targetId: string) {
     const next = { ...relationshipsRef.current };
     delete next[targetId];
@@ -309,17 +323,18 @@ export function CharacterEditorModal({
   }
 
   function addRelationship() {
-    if (!newRelTarget || !newRelLabel.trim()) return;
-    setRelationshipTarget(newRelTarget, newRelLabel);
+    if (!newRelTarget || (!newRelRole && !newRelLabel.trim())) return;
+    const label = newRelRole
+      ? stringifyRelationshipLabel(newRelRole, newRelLabel.trim() || newRelRole)
+      : newRelLabel.trim();
+    setRelationshipTarget(newRelTarget, label);
     setNewRelTarget("");
+    setNewRelRole("");
     setNewRelLabel("");
   }
 
   const otherCast = cast.filter((c) => c.id !== characterId);
-  const relSuggestions = [
-    "mother", "father", "son", "daughter", "sibling", "spouse", "partner",
-    "mentor", "rival", "friend", "guardian",
-  ];
+  const relSuggestions = [...RELATIONSHIP_SUBROLE_SUGGESTIONS];
 
   const portraitSrc = data?.portrait_url && characterId
     ? `${characterPortraitUrl(projectId, characterId)}?v=${portraitVersion}`
@@ -512,7 +527,7 @@ export function CharacterEditorModal({
         </Field>
         <Field label="Relationships">
           <p className="mb-2 text-[11.5px] text-ink-muted">
-            How this character relates to others (e.g. mother, rival). Shown on the relationship graph and family tree.
+            Pick a broad role for grouping/inverses, then use a subrole or custom label for display and prompts.
           </p>
           {Object.keys(relationships).length === 0 ? (
             <p className="mb-2 text-[12px] text-ink-muted">No relationships yet.</p>
@@ -520,16 +535,29 @@ export function CharacterEditorModal({
             <ul className="mb-3 space-y-2">
               {Object.entries(relationships).map(([targetId, label]) => {
                 const target = cast.find((c) => c.id === targetId);
+                const parsed = parseRelationshipLabel(label);
                 return (
                   <li key={targetId} className="flex flex-wrap items-center gap-2">
                     <span className="min-w-[6rem] text-[13px] font-medium text-ink-text">
                       {target?.full_name ?? targetId}
                     </span>
+                    <select
+                      className={`${fieldClass} max-w-[11rem] flex-1`}
+                      value={parsed.role ?? ""}
+                      onChange={(e) => setRelationshipParts(targetId, e.target.value, parsed.subrole)}
+                      aria-label="Relationship role"
+                    >
+                      <option value="">Custom</option>
+                      {CANONICAL_RELATIONSHIP_ROLES.map((role) => (
+                        <option key={role} value={role}>{role}</option>
+                      ))}
+                    </select>
                     <input
                       className={`${fieldClass} max-w-[12rem] flex-1`}
-                      value={label}
-                      onChange={(e) => setRelationshipTarget(targetId, e.target.value)}
-                      placeholder="relationship label"
+                      list="rel-label-suggestions"
+                      value={parsed.subrole}
+                      onChange={(e) => setRelationshipParts(targetId, parsed.role ?? "", e.target.value)}
+                      placeholder="subrole or custom label"
                     />
                     <ToolTip id="codex.removeCharacterRelationship">
                       <button
@@ -566,14 +594,29 @@ export function CharacterEditorModal({
               </div>
               <div className="min-w-[10rem] flex-1">
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                  Label
+                  Role
+                </label>
+                <select
+                  className={fieldClass}
+                  value={newRelRole}
+                  onChange={(e) => setNewRelRole(e.target.value)}
+                >
+                  <option value="">Custom</option>
+                  {CANONICAL_RELATIONSHIP_ROLES.map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="min-w-[10rem] flex-1">
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                  Subrole / label
                 </label>
                 <input
                   className={fieldClass}
                   list="rel-label-suggestions"
                   value={newRelLabel}
                   onChange={(e) => setNewRelLabel(e.target.value)}
-                  placeholder="e.g. mother"
+                  placeholder="e.g. mother, boss, custom label"
                 />
                 <datalist id="rel-label-suggestions">
                   {relSuggestions.map((s) => <option key={s} value={s} />)}
@@ -582,7 +625,7 @@ export function CharacterEditorModal({
               <ToolTip id="graph.addRelationship">
                 <button
                   type="button"
-                  disabled={!newRelTarget || !newRelLabel.trim()}
+                  disabled={!newRelTarget || (!newRelRole && !newRelLabel.trim())}
                   onClick={addRelationship}
                   className="rounded-lg border border-paper-line px-3 py-2 text-[12.5px] font-semibold text-ink-text hover:bg-ink/5 disabled:opacity-40"
                 >

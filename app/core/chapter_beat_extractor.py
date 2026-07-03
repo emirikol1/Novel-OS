@@ -1,8 +1,8 @@
 """
 Extract ranked landed beat candidates from chapter prose via the Archivist.
 
-Review-first: returns candidates for author selection; apply writes landed_beats
-on the chapter brief without touching required_beats.
+Review-first: returns candidates for author selection; apply writes selected rows
+to the chapter beat board.
 """
 
 from __future__ import annotations

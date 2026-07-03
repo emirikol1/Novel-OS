@@ -2,6 +2,10 @@ import ToolTip from "./ToolTip";
 
 export default function ChapterOperationsSection({
   busy,
+  splitAtTargetVisible = false,
+  splitAtTargetRunning = false,
+  splitAtTargetDisabled = false,
+  onSplitAtTargetAndAlign,
   onInsertBefore,
   onInsertAfter,
   onDuplicate,
@@ -10,6 +14,10 @@ export default function ChapterOperationsSection({
   onDelete,
 }: {
   busy: boolean;
+  splitAtTargetVisible?: boolean;
+  splitAtTargetRunning?: boolean;
+  splitAtTargetDisabled?: boolean;
+  onSplitAtTargetAndAlign?: () => void;
   onInsertBefore: () => void;
   onInsertAfter: () => void;
   onDuplicate: () => void;
@@ -23,9 +31,21 @@ export default function ChapterOperationsSection({
     <div className="rounded-lg border border-paper-line bg-paper/60 px-3 py-3">
       <div className="mb-2.5">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">Chapter operations</p>
-        <p className="text-[12px] text-ink-muted">Insert, duplicate, renumber, merge, or delete this chapter.</p>
+        <p className="text-[12px] text-ink-muted">Insert, duplicate, split, renumber, merge, or delete this chapter.</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {splitAtTargetVisible && onSplitAtTargetAndAlign && (
+          <ToolTip id="chapter.splitAtTargetAlign">
+            <button
+              type="button"
+              onClick={onSplitAtTargetAndAlign}
+              disabled={disabled || splitAtTargetDisabled}
+              className="rounded-lg border border-amber/40 bg-amber/5 px-3 py-1.5 text-[12px] font-semibold text-ink-text transition-colors hover:bg-amber/10 disabled:opacity-40"
+            >
+              {splitAtTargetRunning ? "Splitting…" : "Split at target & align"}
+            </button>
+          </ToolTip>
+        )}
         <ToolTip id="chapter.insertBefore">
           <button
             type="button"

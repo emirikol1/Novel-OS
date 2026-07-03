@@ -121,6 +121,54 @@ def beats_for_prompt(
     return beats
 
 
+def migrate_legacy_brief_beats_to_chapter_beats(
+    state: "StoryState",
+    chapter_number: int,
+    brief: ChapterBrief,
+) -> List[ChapterBeat]:
+    """Move old brief beat string lists into the chapter beat board and clear them."""
+    legacy: List[Tuple[str, str]] = []
+    legacy.extend(
+        (title, "planned")
+        for title in [b.strip() for b in (brief.required_beats or []) if (b or "").strip()]
+    )
+    legacy.extend(
+        (title, "landed")
+        for title in [b.strip() for b in (brief.landed_beats or []) if (b or "").strip()]
+    )
+    existing = list(state.get_chapter_beats(chapter_number))
+    if not legacy:
+        return existing
+
+    beats = list(existing)
+    known_keys = {_beat_key(b.title or b.summary) for b in beats if _beat_key(b.title or b.summary)}
+    known_ids = {b.id for b in beats}
+    sort_order = max((b.sort_order for b in beats), default=-1) + 1
+    added = False
+    for title, status in legacy:
+        key = _beat_key(title)
+        if not key or key in known_keys:
+            continue
+        beats.append(
+            ChapterBeat(
+                id=_next_beat_id(chapter_number, known_ids),
+                title=title,
+                summary=title,
+                sort_order=sort_order,
+                status=status,
+            )
+        )
+        known_keys.add(key)
+        sort_order += 1
+        added = True
+
+    brief.required_beats = []
+    brief.landed_beats = []
+    if added:
+        return state.set_chapter_beats(chapter_number, beats)
+    return existing
+
+
 def format_chapter_beats_for_outline_prompt(
     state: "StoryState",
     chapter_number: int,
@@ -179,8 +227,6 @@ def format_chapter_beats_section(
             text = f"{title} — {summary}"
         node_bits: List[str] = []
         if state is not None:
-            from story_graph import character_display_name  # noqa: WPS433
-
             for nid in beat.linked_node_ids or []:
                 node = state.story_graph_nodes.get((nid or "").strip())
                 if node and (node.title or "").strip():
@@ -207,30 +253,51 @@ def merge_cast_ids(existing: List[str], inferred: List[str]) -> List[str]:
     return merged
 
 
+def _beat_key(text: str) -> str:
+    text = re.sub(r"\*\*", "", text or "").strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" .!?:;—-")
+
+
+def _next_beat_id(chapter_number: int, known_ids: set[str]) -> str:
+    n = len(known_ids) + 1
+    beat_id = f"beat_{chapter_number}_{n:03d}"
+    while beat_id in known_ids:
+        n += 1
+        beat_id = f"beat_{chapter_number}_{n:03d}"
+    known_ids.add(beat_id)
+    return beat_id
+
+
 def merge_planned_beats(
     state: "StoryState",
     chapter_number: int,
     new_titles: List[str],
 ) -> List[ChapterBeat]:
     """Merge generated planned beats without clobbering landed or hand-edited planned rows."""
-    from story_graph import new_chapter_beat_id  # noqa: WPS433
-
     existing = list(state.get_chapter_beats(chapter_number))
     landed = [b for b in existing if (b.status or "").strip() == "landed"]
     planned = [b for b in existing if (b.status or "").strip() != "landed"]
+    known_ids = {b.id for b in existing}
+    incoming: List[str] = []
+    incoming_seen: set[str] = set()
+    for title in new_titles:
+        title = (title or "").strip()
+        key = _beat_key(title)
+        if not title or not key or key in incoming_seen:
+            continue
+        incoming.append(title)
+        incoming_seen.add(key)
     if planned:
-        known = {
-            ((b.title or "").strip().lower(), (b.summary or "").strip().lower())
-            for b in planned
-        }
+        known = {_beat_key(b.title or b.summary) for b in planned if _beat_key(b.title or b.summary)}
         sort_order = max((b.sort_order for b in existing), default=-1) + 1
-        for title in new_titles:
-            key = (title.strip().lower(), title.strip().lower())
+        for title in incoming:
+            key = _beat_key(title)
             if key in known:
                 continue
             planned.append(
                 ChapterBeat(
-                    id=new_chapter_beat_id(state, chapter_number),
+                    id=_next_beat_id(chapter_number, known_ids),
                     title=title,
                     summary=title,
                     sort_order=sort_order,
@@ -243,10 +310,10 @@ def merge_planned_beats(
 
     beats = list(landed)
     sort_order = max((b.sort_order for b in beats), default=-1) + 1
-    for title in new_titles:
+    for title in incoming:
         beats.append(
             ChapterBeat(
-                id=new_chapter_beat_id(state, chapter_number),
+                id=_next_beat_id(chapter_number, known_ids),
                 title=title,
                 summary=title,
                 sort_order=sort_order,

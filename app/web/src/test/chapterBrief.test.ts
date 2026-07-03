@@ -19,8 +19,6 @@ describe("chapterBrief utils", () => {
     expect(draft.pov_character_id).toBe("char_a");
     expect(draft.mentioned_character_ids).toEqual(["char_a", "char_b"]);
     expect(draft.active_node_ids).toEqual(["sg_main", "sg_sub2"]);
-    expect(draft).not.toHaveProperty("required_beats");
-    expect(draft).not.toHaveProperty("landed_beats");
   });
 
   it("round-trips mentioned_character_ids from API summary", () => {
@@ -78,13 +76,11 @@ describe("chapterBrief utils", () => {
     expect(draft.mentioned_character_ids).toEqual(["char_a", "char_b"]);
   });
 
-  it("omits beat lists from save payload", () => {
+  it("serializes only current brief fields", () => {
     const payload = briefToPayload({
       ...EMPTY_BRIEF_DRAFT,
       ending_hook: "Cliffhanger",
     });
-    expect(payload).not.toHaveProperty("required_beats");
-    expect(payload).not.toHaveProperty("landed_beats");
     expect(payload.ending_hook).toBe("Cliffhanger");
   });
 
@@ -97,18 +93,6 @@ describe("chapterBrief utils", () => {
     expect(briefHasContent(EMPTY_BRIEF_DRAFT)).toBe(false);
     expect(briefHasContent({ ...EMPTY_BRIEF_DRAFT, pov_character_id: "x" })).toBe(true);
     expect(briefHasContent({ ...EMPTY_BRIEF_DRAFT, ending_hook: "Hook" })).toBe(true);
-  });
-
-  it("does not merge generated beat strings into draft", () => {
-    const existing = EMPTY_BRIEF_DRAFT;
-    const generated = {
-      ...SAMPLE_CHAPTER_BRIEF,
-      landed_beats: [],
-      required_beats: ["Alice discovers the alarm code"],
-    };
-    const draft = briefFromGeneratedSummary(generated, existing);
-    expect(draft).not.toHaveProperty("landed_beats");
-    expect(draft).not.toHaveProperty("required_beats");
   });
 
   it("steps chapter target length by 100 words", () => {

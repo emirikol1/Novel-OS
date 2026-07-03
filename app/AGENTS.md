@@ -13,6 +13,18 @@ User manuscripts, outlines, character bios, and story bible content are **privat
 
 In-app agents (Architect, Scribe, etc.) still consume story text via LLM prompts — that is expected runtime behavior for the author's local install, not Cursor development access.
 
+## Maintainer guidance for coding agents
+
+When modifying Novel OS itself:
+
+- Treat `StoryState` as the JSON source of truth; prefer existing helpers in `core/`, `api/services.py`, and `web/src/api/client.ts`.
+- Keep prompt text, parser field names, API models, frontend types, and tests in sync.
+- Preserve preview-first workflows for destructive or AI-generated changes; applying a preview is what saves canonical state.
+- Use synthetic fixtures in `app/tests/` and `tmp_path`; never depend on real project folders.
+- Add docstrings to public helpers, migration steps, parser/apply functions, and exported frontend utilities when intent or failure behavior is not obvious.
+- Relationship labels live in `Character.relationships` as strings: free text or `role(subrole): note`. Keep backend and frontend parsers aligned.
+- Verification defaults: backend `source ../venv/bin/activate && python -m pytest tests/ -q`; frontend `npm test -- --run <test-file>` and `npm run build` after TypeScript/React edits.
+
 ---
 
 # 1. 🏗️ THE ARCHITECT (Planner Agent)

@@ -205,6 +205,36 @@ function ContextPreviewModal({
               </div>
             )}
 
+            <div>
+              <h3 className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">
+                Chapter beats
+              </h3>
+              {preview.beats.length === 0 ? (
+                <p className="text-[12.5px] text-ink-muted">
+                  No beat-board rows would be included for this chapter.
+                </p>
+              ) : (
+                <ol className="max-h-[24vh] space-y-2 overflow-auto pr-1">
+                  {preview.beats.map((beat, index) => (
+                    <li
+                      key={beat.id || `${index}-${beat.title}`}
+                      className="rounded-lg border border-paper-line bg-paper/60 px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-deep">
+                          {beat.status}
+                        </span>
+                        <p className="text-[13px] font-semibold text-ink-text">{beat.title}</p>
+                      </div>
+                      {beat.summary && beat.summary.trim().toLowerCase() !== beat.title.trim().toLowerCase() && (
+                        <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">{beat.summary}</p>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+
             <ContextPreviewSectionBlock
               title="Story Bible"
               section={preview.bible}
@@ -693,6 +723,7 @@ export default function ChapterBriefPanel({
         max_beats: 5,
       });
       setDraft((prev) => draftWithProjectDefaults(briefFromGeneratedSummary(generated, prev), projectStyle));
+      setBeatBoardRefresh((n) => n + 1);
       setCollapsed(false);
       toast("Generated a draft chapter brief — review and save it when ready", "success");
     } catch (e) {

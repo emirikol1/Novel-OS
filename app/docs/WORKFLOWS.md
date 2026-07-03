@@ -68,8 +68,7 @@ Chapter briefs live per chapter in `story_state.json`:
 - `mentioned_character_ids` — cast referenced this chapter (v2).
 - `active_character_ids` — subset of mentioned cast whose state should drive prompts (v2 triple toggle).
 - `active_node_ids` — graph nodes that should advance this chapter (in effect, not just eligible).
-- `chapter_beats` — consolidated beat list (preferred over legacy `required_beats` / `landed_beats` strings).
-- `required_beats`, `landed_beats` — legacy string lists; still supported for older projects.
+- `chapter_beats` — chapter-local beat board rows. Use `planned` for beats the chapter should hit and `landed` for events already present in manuscript text.
 - `continuity_notes`, `ending_hook` — author-facing planning text.
 
 See [STORY_GRAPH.md](STORY_GRAPH.md) for eligible vs in-effect nodes and prompt fallbacks when outline is missing.

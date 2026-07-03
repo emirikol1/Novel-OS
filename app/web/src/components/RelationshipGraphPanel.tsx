@@ -1,16 +1,16 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { api, type CharacterDetail, type CharacterSummary } from "../api/client";
-import { buildRelationshipEdges } from "../lib/characterRelationships";
+import {
+  CANONICAL_RELATIONSHIP_ROLES,
+  RELATIONSHIP_SUBROLE_SUGGESTIONS,
+  buildRelationshipEdges,
+  stringifyRelationshipLabel,
+} from "../lib/characterRelationships";
 import Modal, { Field, fieldClass } from "./Modal";
 import ToolTip from "./ToolTip";
 import { useToast } from "./Toaster";
 
 const RelationshipGraphWorkbench = lazy(() => import("./RelationshipGraphWorkbench"));
-
-const REL_SUGGESTIONS = [
-  "mother", "father", "son", "daughter", "sibling", "spouse", "partner",
-  "mentor", "rival", "friend", "guardian",
-];
 
 function RelationshipLinkModal({
   projectId,
@@ -28,21 +28,28 @@ function RelationshipLinkModal({
   nameById: Map<string, string>;
 }) {
   const toast = useToast();
+  const [role, setRole] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (open) setLabel("");
+    if (open) {
+      setRole("");
+      setLabel("");
+    }
   }, [open, draft?.sourceId, draft?.targetId]);
 
   async function save() {
-    if (!draft || !label.trim()) return;
+    if (!draft || (!role && !label.trim())) return;
     setBusy(true);
     try {
       const source = await api.character(projectId, draft.sourceId);
+      const relationshipLabel = role
+        ? stringifyRelationshipLabel(role, label.trim() || role)
+        : label.trim();
       const relationships = {
         ...(source.relationships ?? {}),
-        [draft.targetId]: label.trim(),
+        [draft.targetId]: relationshipLabel,
       };
       await api.updateCharacter(projectId, draft.sourceId, {
         ...source,
@@ -68,20 +75,32 @@ function RelationshipLinkModal({
         <span className="font-semibold text-ink-text">{tgt}</span>
       </p>
       <div className="space-y-4">
-        <Field label="Relationship label">
+        <Field label="Relationship role">
+          <select
+            className={fieldClass}
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            autoFocus
+          >
+            <option value="">Custom</option>
+            {CANONICAL_RELATIONSHIP_ROLES.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Subrole / custom label">
           <input
             className={fieldClass}
             list="rel-link-suggestions"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="e.g. mother, rival, mentor"
-            autoFocus
+            placeholder="e.g. mother, boss, custom label"
           />
           <datalist id="rel-link-suggestions">
-            {REL_SUGGESTIONS.map((s) => <option key={s} value={s} />)}
+            {RELATIONSHIP_SUBROLE_SUGGESTIONS.map((s) => <option key={s} value={s} />)}
           </datalist>
           <p className="mt-1 text-[11.5px] text-ink-muted">
-            Stored on {src}&apos;s profile (how they relate to {tgt}).
+            Role drives grouping and inverse defaults. Subrole/custom label is what displays.
           </p>
         </Field>
         <div className="flex justify-end gap-2">
@@ -98,7 +117,7 @@ function RelationshipLinkModal({
             <button
               type="button"
               onClick={() => void save()}
-              disabled={busy || !label.trim()}
+              disabled={busy || (!role && !label.trim())}
               className="rounded-lg bg-ink px-4 py-2 text-[13px] font-semibold text-on-ink hover:bg-ink-800 disabled:opacity-40"
             >
               {busy ? "Saving…" : "Add relationship"}

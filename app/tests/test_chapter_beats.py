@@ -163,11 +163,14 @@ def test_list_chapter_beats_lazy_migrates_legacy_brief_beats(tmp_path):
     state.set_chapter_brief(
         ChapterBrief(
             chapter_number=3,
-            required_beats=["Reach the vault", "Disable alarm"],
-            landed_beats=["Alarm already triggered"],
         )
     )
     state.save_state()
+    state_file = tmp_path / "p" / "outputs" / "state" / "story_state.json"
+    raw = json.loads(state_file.read_text(encoding="utf-8"))
+    raw["chapter_briefs"]["3"]["required_beats"] = ["Reach the vault", "Disable alarm"]
+    raw["chapter_briefs"]["3"]["landed_beats"] = ["Alarm already triggered"]
+    state_file.write_text(json.dumps(raw), encoding="utf-8")
     c = _client(tmp_path)
 
     listed = c.get("/api/projects/p/chapters/3/beats")

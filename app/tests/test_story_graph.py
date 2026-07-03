@@ -271,7 +271,6 @@ def test_chapter_brief_save_load(tmp_path):
             "pov_mode": "first_person",
             "active_character_ids": ["char_a", "char_b"],
             "active_node_ids": [main_node["id"]],
-            "required_beats": ["Alarm fails", "Bob confronts Alice"],
             "continuity_notes": "Alice still has the keycard.",
             "ending_hook": "The vault door opens.",
         },
@@ -281,7 +280,8 @@ def test_chapter_brief_save_load(tmp_path):
     assert body["chapter_number"] == 3
     assert body["pov_character_id"] == "char_a"
     assert body["pov_mode"] == "first_person"
-    assert body["required_beats"] == ["Alarm fails", "Bob confronts Alice"]
+    assert "required_beats" not in body
+    assert "landed_beats" not in body
     assert body["ending_hook"] == "The vault door opens."
 
     loaded = c.get("/api/projects/p/chapters/3/brief").json()
@@ -291,6 +291,8 @@ def test_chapter_brief_save_load(tmp_path):
     disk = json.loads(sf.read_text())
     assert "3" in disk["chapter_briefs"]
     assert disk["chapter_briefs"]["3"]["continuity_notes"] == "Alice still has the keycard."
+    assert "required_beats" not in disk["chapter_briefs"]["3"]
+    assert "landed_beats" not in disk["chapter_briefs"]["3"]
 
     assert c.delete("/api/projects/p/chapters/3/brief").status_code == 204
     assert c.get("/api/projects/p/chapters/3/brief").status_code == 404
@@ -353,7 +355,7 @@ def test_graph_duplicates_api_scan_and_merge(tmp_path):
 
 def _seed_context_preview_project(tmp_path):
     """Synthetic project with bible, graph, chapter, and brief for context preview."""
-    from story_graph import ChapterBrief, StoryGraphNode
+    from story_graph import ChapterBeat, ChapterBrief, StoryGraphNode
 
     _seed_plot_project(tmp_path, with_characters=True)
     state = StoryState(str(tmp_path / "p"))
@@ -385,10 +387,13 @@ def _seed_context_preview_project(tmp_path):
             pov_mode="third_limited",
             active_character_ids=["char_a", "char_b"],
             active_node_ids=[main_node, *[f"extra_node_{i}" for i in range(8)]],
-            required_beats=["Vault alarm fails"],
             continuity_notes="Alice still has the keycard.",
             ending_hook="The vault door opens.",
         ),
+    )
+    state.set_chapter_beats(
+        3,
+        [ChapterBeat(id="beat_3_001", title="Vault alarm fails", status="planned", sort_order=0)],
     )
     state.save_state()
     proj = tmp_path / "p"
@@ -442,7 +447,6 @@ def test_chapter_context_preview_post_uses_brief_body(tmp_path):
             "mode": "outline",
             "active_character_ids": ["char_a"],
             "active_node_ids": [],
-            "required_beats": ["Vault alarm fails"],
         },
     )
     assert resp.status_code == 200

@@ -55,7 +55,6 @@ export type ChapterWorkflowToolbarProps = {
   onAlignBoundary: () => void;
   onRegenerateOutline: (mode: "notes" | "text") => void;
   onSplitChapter: () => void;
-  onSplitAtTargetAndAlign: () => void;
   onMine: (kind: MineKind) => void;
   /** Tighter spacing when rendered in sticky chapter chrome. */
   embedded?: boolean;
@@ -234,7 +233,6 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
     onAlignBoundary,
     onRegenerateOutline,
     onSplitChapter,
-    onSplitAtTargetAndAlign,
     embedded = false,
   } = props;
 
@@ -575,20 +573,11 @@ export default function ChapterWorkflowToolbar(props: ChapterWorkflowToolbarProp
         </WorkflowSection>
       )}
 
-      {(longChapterText || isRunning || hasRegenerateSource) && (
+      {(longChapterText || isRunning) && (
         <div>
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-muted">Advanced</p>
           <div className="rounded-md border border-paper-line/60 bg-paper/40 px-3 py-2">
           <div className="flex flex-wrap items-center gap-1.5">
-            {hasRegenerateSource && (
-              <RunButton
-                label={splittingChapter ? "Splitting…" : "Split at target & align"}
-                running={splittingChapter}
-                disabled={isRunning || splittingChapter || outlineGenerating || aligningBoundary || !hasRegenerateSource}
-                tipId="chapter.splitAtTargetAlign"
-                onClick={onSplitAtTargetAndAlign}
-              />
-            )}
             {longChapterText && (
               <RunButton
                 label={splittingChapter ? "Splitting…" : "Split into parts (1a, 1b…)"}

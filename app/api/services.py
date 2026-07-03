@@ -48,6 +48,7 @@ if str(_CORE) not in sys.path:
     sys.path.insert(0, str(_CORE))
 
 from state_manager import StoryState, Character, PlotThread, TimelineEvent, ChapterState  # noqa: E402
+from relationship_roles import parse_relationship_label, stringify_relationship_label  # noqa: E402
 from story_graph import (  # noqa: E402
     ChapterBeat,
     ChapterBrief,
@@ -116,6 +117,21 @@ class ChapterBeatNotFound(Exception):
 _TIMELINE_EVENT_TYPES = frozenset({"scene", "backstory", "flashback", "summary"})
 _TIMELINE_SIGNIFICANCE = frozenset({"minor", "major", "turning_point", "climax"})
 _RESEARCH_KINDS = frozenset({"note", "link", "quote", "image", "idea"})
+
+
+def _normalize_relationships_for_storage(value):
+    """Normalize known role/subrole labels while preserving custom free text."""
+    if not isinstance(value, dict):
+        return value
+    normalized = {}
+    for target_id, label in value.items():
+        raw = str(label or "").strip()
+        parsed = parse_relationship_label(raw)
+        if parsed.role:
+            normalized[target_id] = stringify_relationship_label(parsed.role, parsed.subrole, parsed.note)
+        else:
+            normalized[target_id] = raw
+    return normalized
 
 
 class NoSourceArtifact(Exception):
@@ -455,6 +471,7 @@ class ProjectService:
             number = int(item.get("number", 0))
             if number <= 0:
                 continue
+            scenes = [str(scene).strip() for scene in item.get("scenes", []) if str(scene).strip()]
             per_chapter_target = int(item.get("word_count_target", max(1, words // chapters)))
             project_default = s.style_profile.chapter_target_words or 2500
             brief_target = (
@@ -473,10 +490,13 @@ class ProjectService:
                     chapter_number=number,
                     pov_mode=s.style_profile.point_of_view or "third_limited",
                     target_word_count=brief_target,
-                    required_beats=list(item.get("scenes", [])),
                     ending_hook=str(item.get("ending_hook", "")),
                     continuity_notes=str(item.get("continuity_notes", "")),
                 ))
+            if scenes:
+                from chapter_brief_utils import merge_planned_beats  # noqa: WPS433
+
+                s.set_chapter_beats(number, merge_planned_beats(s, number, scenes))
             chapter = s.chapters.get(number)
             brief = s.get_chapter_brief(number)
             if chapter is not None and brief is not None:
@@ -1101,6 +1121,8 @@ class ProjectService:
             k: v for k, v in updates.items()
             if v is not None and k not in ("portrait_filename", "portrait_url")
         }
+        if "relationships" in filtered:
+            filtered["relationships"] = _normalize_relationships_for_storage(filtered["relationships"])
         if filtered:
             s.update_character(character_id, filtered)
             s.save_state()
@@ -2101,10 +2123,20 @@ class ProjectService:
         ]
         self._preflight_chapter_file_renames(proj, archive_steps)
 
+        from chapter_brief_utils import migrate_legacy_brief_beats_to_chapter_beats  # noqa: WPS433
+
+        keep_brief = s.chapter_briefs.get(keep_number)
+        source_brief = s.chapter_briefs.get(source_number)
+        if keep_brief is not None:
+            migrate_legacy_brief_beats_to_chapter_beats(s, keep_number, keep_brief)
+        if source_brief is not None:
+            migrate_legacy_brief_beats_to_chapter_beats(s, source_number, source_brief)
+        keep_beats = list(s.get_chapter_beats(keep_number))
+        source_beats = list(s.get_chapter_beats(source_number))
         merged_brief = self._merge_chapter_briefs(
             keep_number,
-            s.chapter_briefs.get(keep_number),
-            s.chapter_briefs.get(source_number),
+            keep_brief,
+            source_brief,
             source_number=source_number,
         )
 
@@ -2126,6 +2158,11 @@ class ProjectService:
             path.unlink()
         s.chapter_briefs.pop(source_number, None)
         s._remap_chapter_number(source_number, keep_number)
+        merged_beats = keep_beats + source_beats
+        if merged_beats:
+            for index, beat in enumerate(merged_beats):
+                beat.sort_order = index
+            s.set_chapter_beats(keep_number, merged_beats)
         s.chapters.pop(source_number, None)
         self._merge_chapter_state(keep, source, source_number=source_number)
         keep.title = f"{keep.title or f'Chapter {keep_number}'} / {source.title or f'Chapter {source_number}'}"
@@ -2253,8 +2290,6 @@ class ProjectService:
             target_word_count=base.target_word_count or extra.target_word_count,
             active_character_ids=merged_list(base.active_character_ids, extra.active_character_ids),
             active_node_ids=merged_list(base.active_node_ids, extra.active_node_ids),
-            required_beats=merged_list(base.required_beats, extra.required_beats),
-            landed_beats=merged_list(base.landed_beats, extra.landed_beats),
             continuity_notes=merged_notes(base.continuity_notes, extra.continuity_notes),
             ending_hook=base.ending_hook,
         )
@@ -4162,39 +4197,13 @@ class ProjectService:
     def _lazy_migrate_chapter_beats_from_brief(
         self, s: StoryState, chapter_number: int,
     ) -> list[ChapterBeat]:
-        """One-time backfill from legacy brief beat strings when chapter_beats is empty."""
-        from story_graph import new_chapter_beat_id  # noqa: WPS433
+        """One-time compatibility import from old brief beat strings."""
+        from chapter_brief_utils import migrate_legacy_brief_beats_to_chapter_beats  # noqa: WPS433
 
         brief = s.get_chapter_brief(chapter_number)
         if brief is None:
             return []
-        required = [b.strip() for b in (brief.required_beats or []) if (b or "").strip()]
-        landed = [b.strip() for b in (brief.landed_beats or []) if (b or "").strip()]
-        if not required and not landed:
-            return []
-        beats: list[ChapterBeat] = []
-        sort_order = 0
-        for title in required:
-            beats.append(
-                ChapterBeat(
-                    id=new_chapter_beat_id(s, chapter_number),
-                    title=title,
-                    sort_order=sort_order,
-                    status="planned",
-                )
-            )
-            sort_order += 1
-        for title in landed:
-            beats.append(
-                ChapterBeat(
-                    id=new_chapter_beat_id(s, chapter_number),
-                    title=title,
-                    sort_order=sort_order,
-                    status="landed",
-                )
-            )
-            sort_order += 1
-        return s.set_chapter_beats(chapter_number, beats)
+        return migrate_legacy_brief_beats_to_chapter_beats(s, chapter_number, brief)
 
     def create_chapter_beat(
         self,
@@ -4457,6 +4466,29 @@ class ProjectService:
     def _chapter_brief_summary(self, brief: ChapterBrief) -> ChapterBriefSummary:
         return ChapterBriefSummary(**brief.to_dict())
 
+    @staticmethod
+    def _chapter_brief_from_current_fields(chapter_number: int, data: dict) -> ChapterBrief:
+        try:
+            target_word_count = max(0, int(data.get("target_word_count") or 0))
+        except (TypeError, ValueError):
+            raise BadRequest("target_word_count must be a non-negative integer") from None
+        return ChapterBrief(
+            chapter_number=chapter_number,
+            pov_character_id=(data.get("pov_character_id") or "").strip(),
+            pov_mode=(data.get("pov_mode") or "").strip(),
+            tone=(data.get("tone") or "").strip(),
+            tense=(data.get("tense") or "").strip(),
+            prose_style=(data.get("prose_style") or "").strip(),
+            vocabulary_level=(data.get("vocabulary_level") or "").strip(),
+            style_notes=(data.get("style_notes") or "").strip(),
+            target_word_count=target_word_count,
+            active_character_ids=list(data.get("active_character_ids") or []),
+            mentioned_character_ids=list(data.get("mentioned_character_ids") or []),
+            active_node_ids=list(data.get("active_node_ids") or []),
+            continuity_notes=(data.get("continuity_notes") or "").strip(),
+            ending_hook=(data.get("ending_hook") or "").strip(),
+        )
+
     def get_chapter_brief(self, project_id: str, chapter_number: int) -> ChapterBriefSummary:
         from copy import deepcopy
         from story_graph import legacy_chapter_pov_character_id, legacy_chapter_target_override  # noqa: WPS433
@@ -4543,12 +4575,6 @@ class ProjectService:
                         parts.append(f"{title} {summary}")
                     elif title:
                         parts.append(title)
-            else:
-                parts.extend(b.strip() for b in (brief.required_beats or []) if (b or "").strip())
-                parts.extend(b.strip() for b in (brief.landed_beats or []) if (b or "").strip())
-        else:
-            parts.extend(b.strip() for b in (brief.required_beats or []) if (b or "").strip())
-            parts.extend(b.strip() for b in (brief.landed_beats or []) if (b or "").strip())
         notes = (brief.continuity_notes or "").strip()
         if notes:
             parts.append(notes)
@@ -4559,24 +4585,7 @@ class ProjectService:
 
     @staticmethod
     def _brief_from_preview_request(chapter_number: int, data: dict) -> ChapterBrief:
-        return ChapterBrief(
-            chapter_number=chapter_number,
-            pov_character_id=(data.get("pov_character_id") or "").strip(),
-            pov_mode=(data.get("pov_mode") or "").strip(),
-            tone=(data.get("tone") or "").strip(),
-            tense=(data.get("tense") or "").strip(),
-            prose_style=(data.get("prose_style") or "").strip(),
-            vocabulary_level=(data.get("vocabulary_level") or "").strip(),
-            style_notes=(data.get("style_notes") or "").strip(),
-            target_word_count=max(0, int(data.get("target_word_count") or 0)),
-            active_character_ids=list(data.get("active_character_ids") or []),
-            mentioned_character_ids=list(data.get("mentioned_character_ids") or []),
-            active_node_ids=list(data.get("active_node_ids") or []),
-            required_beats=list(data.get("required_beats") or []),
-            landed_beats=list(data.get("landed_beats") or []),
-            continuity_notes=(data.get("continuity_notes") or "").strip(),
-            ending_hook=(data.get("ending_hook") or "").strip(),
-        )
+        return ProjectService._chapter_brief_from_current_fields(chapter_number, data)
 
     def get_chapter_context_preview(
         self,
@@ -4654,7 +4663,12 @@ class ProjectService:
         source: str = "best",
         max_beats: int = 5,
     ) -> ChapterBriefSummary:
-        from chapter_brief_utils import infer_cast_from_text, merge_cast_ids, merge_planned_beats  # noqa: WPS433
+        from chapter_brief_utils import (  # noqa: WPS433
+            infer_cast_from_text,
+            merge_cast_ids,
+            merge_planned_beats,
+            migrate_legacy_brief_beats_to_chapter_beats,
+        )
 
         s = self._load(project_id)
         chapter = s.chapters.get(chapter_number)
@@ -4670,7 +4684,10 @@ class ProjectService:
             raise BadRequest("No outline, final, revised, or draft text found for this chapter.")
 
         existing_brief = s.get_chapter_brief(chapter_number)
-        pov_name = chapter.pov_character or ""
+        explicit_pov_name = self._brief_pov_character_name_from_text(combined)
+        if explicit_pov_name and not (existing_brief and (existing_brief.pov_character_id or "").strip()):
+            self._ensure_brief_pov_character(s, explicit_pov_name, chapter_number)
+        pov_name = explicit_pov_name or chapter.pov_character or ""
         if existing_brief and (existing_brief.pov_character_id or "").strip():
             pov_name = character_display_name(s, existing_brief.pov_character_id)
 
@@ -4678,6 +4695,8 @@ class ProjectService:
         pov_id = ""
         if existing_brief and (existing_brief.pov_character_id or "").strip():
             pov_id = existing_brief.pov_character_id
+        elif explicit_pov_name:
+            pov_id = self._brief_character_id_by_name(s, explicit_pov_name)
         elif chapter.pov_character:
             for cid, char in s.characters.items():
                 if char.full_name.lower() == chapter.pov_character.lower():
@@ -4710,48 +4729,22 @@ class ProjectService:
             beat_strings,
             chapter_number=chapter_number,
         )
-        ending_hook = self._brief_ending_hook(body_text or outline)
+        ending_hook = self._brief_ending_hook(outline) or self._brief_ending_hook(body_text)
         source_label = found[0] if found else "outline"
         notes = self._brief_continuity_notes(chapter, source_label, active_nodes, s)
-        landed_beats = list(existing_brief.landed_beats or []) if existing_brief else []
-        style_fields = {
-            "pov_mode": "",
-            "tone": "",
-            "tense": "",
-            "prose_style": "",
-            "vocabulary_level": "",
-            "style_notes": "",
-        }
-        if existing_brief is not None:
-            for key in style_fields:
-                value = (getattr(existing_brief, key, "") or "").strip()
-                if value:
-                    style_fields[key] = value
+        source_notes = self._brief_continuity_notes_from_text(combined)
+        if source_notes:
+            notes = f"{source_notes} {notes}".strip()
+        style_fields = self._brief_style_fields_for_generation(s, existing_brief, combined)
+        target_word_count = self._brief_target_word_count_for_generation(
+            s,
+            chapter,
+            existing_brief,
+            combined,
+        )
 
-        existing_beats = list(s.get_chapter_beats(chapter_number))
         if existing_brief:
-            known_landed = {
-                (b.title or "").strip().lower()
-                for b in existing_beats
-                if (b.status or "").strip() == "landed"
-            }
-            sort_order = max((b.sort_order for b in existing_beats), default=-1) + 1
-            for title in [b.strip() for b in (existing_brief.landed_beats or []) if (b or "").strip()]:
-                if title.lower() in known_landed:
-                    continue
-                existing_beats.append(
-                    ChapterBeat(
-                        id=new_chapter_beat_id(s, chapter_number),
-                        title=title,
-                        summary=title,
-                        sort_order=sort_order,
-                        status="landed",
-                    )
-                )
-                known_landed.add(title.lower())
-                sort_order += 1
-            if existing_beats:
-                s.set_chapter_beats(chapter_number, existing_beats)
+            migrate_legacy_brief_beats_to_chapter_beats(s, chapter_number, existing_brief)
 
         merged_beats = merge_planned_beats(s, chapter_number, beat_strings)
         s.set_chapter_beats(chapter_number, merged_beats)
@@ -4760,12 +4753,10 @@ class ProjectService:
         return ChapterBriefSummary(
             chapter_number=chapter_number,
             pov_character_id=pov_id,
-            target_word_count=0,
+            target_word_count=target_word_count,
             mentioned_character_ids=mentioned_ids,
             active_character_ids=active_ids,
             active_node_ids=active_nodes[:12],
-            required_beats=[],
-            landed_beats=landed_beats,
             continuity_notes=notes,
             ending_hook=ending_hook,
             **style_fields,
@@ -4918,6 +4909,263 @@ class ProjectService:
         return [node_id for _, _, node_id in scored[:12]]
 
     @staticmethod
+    def _brief_label_key(label: str) -> str:
+        label = re.sub(r"\*\*", "", label or "").strip().lower()
+        return re.sub(r"[^a-z0-9]+", " ", label).strip()
+
+    @staticmethod
+    def _brief_clean_value(value: str) -> str:
+        value = re.sub(r"\*\*", "", value or "").strip()
+        value = value.strip("`\"' ")
+        value = re.sub(r"\s+", " ", value)
+        if value.lower() in {"", "unknown", "[unknown]", "n/a", "none"}:
+            return ""
+        return value
+
+    @classmethod
+    def _brief_metadata_pairs(cls, text: str) -> list[tuple[str, str]]:
+        pairs: list[tuple[str, str]] = []
+        for raw in (text or "").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s*)", "", line).strip()
+            line = re.sub(r"\*\*([^*]+?)\*\*", r"\1", line)
+            for part in re.split(r"\s+\|\s+", line):
+                match = re.match(
+                    r"^(?:#{1,6}\s*)?(?P<label>[A-Za-z][A-Za-z0-9 /_-]{0,48})\s*[:：—-]\s*(?P<value>.+)$",
+                    part.strip(),
+                )
+                if not match:
+                    continue
+                label = cls._brief_label_key(match.group("label"))
+                value = cls._brief_clean_value(match.group("value"))
+                if label and value:
+                    pairs.append((label, value))
+        return pairs
+
+    @classmethod
+    def _brief_metadata_value(cls, text: str, labels: set[str]) -> str:
+        keys = {cls._brief_label_key(label) for label in labels}
+        for label, value in cls._brief_metadata_pairs(text):
+            if label in keys:
+                return value
+        return ""
+
+    @classmethod
+    def _brief_markdown_section(cls, text: str, headings: set[str]) -> str:
+        keys = {cls._brief_label_key(heading) for heading in headings}
+        capture = False
+        lines: list[str] = []
+        for raw in (text or "").splitlines():
+            heading = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", raw)
+            if heading:
+                key = cls._brief_label_key(heading.group(1))
+                if capture:
+                    break
+                if key in keys:
+                    capture = True
+                    continue
+            if capture:
+                lines.append(raw)
+        if not lines:
+            return ""
+        cleaned: list[str] = []
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("```"):
+                continue
+            line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s*)", "", line).strip()
+            line = cls._brief_clean_value(line)
+            if line:
+                cleaned.append(line)
+        return " ".join(cleaned)
+
+    @staticmethod
+    def _brief_normalize_pov_mode(value: str) -> str:
+        lower = re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+        if not lower:
+            return ""
+        compact = lower.replace(" ", "_")
+        valid = {
+            "first_person",
+            "second_person",
+            "third_limited",
+            "third_omniscient",
+            "third_objective",
+            "multiple_pov",
+            "epistolary",
+            "stream_of_consciousness",
+            "other",
+        }
+        if compact in valid:
+            return compact
+        if "stream" in lower and "conscious" in lower:
+            return "stream_of_consciousness"
+        if "epistolary" in lower or "document" in lower or "letter" in lower:
+            return "epistolary"
+        if "multiple" in lower or "multi pov" in lower:
+            return "multiple_pov"
+        if "second" in lower:
+            return "second_person"
+        if "first" in lower:
+            return "first_person"
+        if "third" in lower and "omniscient" in lower:
+            return "third_omniscient"
+        if "third" in lower and "objective" in lower:
+            return "third_objective"
+        if "third" in lower and ("limited" in lower or "close" in lower or "deep" in lower):
+            return "third_limited"
+        if "third" in lower:
+            return "third_limited"
+        return ""
+
+    @classmethod
+    def _brief_pov_character_name_from_text(cls, text: str) -> str:
+        raw = cls._brief_metadata_value(
+            text,
+            {"pov character", "viewpoint character", "viewpoint", "pov"},
+        )
+        if not raw:
+            return ""
+        candidate = re.split(
+            r"\s*(?:\(|,|;|\||/|\s[-—]\s)\s*(?:first|second|third|multiple|multi|epistolary|stream|objective)\b",
+            raw,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip()
+        if not candidate or cls._brief_normalize_pov_mode(candidate):
+            return ""
+        return candidate
+
+    @staticmethod
+    def _brief_character_id_by_name(state: StoryState, name: str) -> str:
+        target = (name or "").strip().lower()
+        if not target:
+            return ""
+        for cid, char in state.characters.items():
+            names = [n.strip().lower() for n in char.all_names() if n.strip()]
+            if target in names:
+                return cid
+        for cid, char in state.characters.items():
+            names = [n.strip().lower() for n in char.all_names() if n.strip()]
+            if any(target in n or n in target for n in names):
+                return cid
+        return ""
+
+    @classmethod
+    def _ensure_brief_pov_character(cls, state: StoryState, name: str, chapter_number: int) -> str:
+        existing_id = cls._brief_character_id_by_name(state, name)
+        if existing_id:
+            return existing_id
+
+        base = re.sub(r"[^a-z0-9]+", "_", (name or "").strip().lower()).strip("_") or "pov"
+        cid = f"char_{base}"
+        suffix = 2
+        while cid in state.characters:
+            cid = f"char_{base}_{suffix}"
+            suffix += 1
+        state.add_character(
+            Character(
+                id=cid,
+                full_name=name.strip(),
+                role="supporting",
+                notes=f"Created from chapter {chapter_number} POV metadata.",
+                last_appearance_chapter=chapter_number,
+            ),
+        )
+        return cid
+
+    @classmethod
+    def _brief_int_from_text(cls, value: str) -> int:
+        match = re.search(r"(\d+(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|thousand|words?)?", value or "", re.I)
+        if not match:
+            return 0
+        number = float(match.group(1).replace(",", ""))
+        suffix = (match.group(2) or "").lower()
+        if suffix in {"k", "thousand"}:
+            number *= 1000
+        return max(0, int(round(number)))
+
+    @classmethod
+    def _brief_target_word_count_for_generation(
+        cls,
+        state: StoryState,
+        chapter,
+        existing_brief: ChapterBrief | None,
+        text: str,
+    ) -> int:
+        if existing_brief is not None and (existing_brief.target_word_count or 0) > 0:
+            return int(existing_brief.target_word_count)
+        source_value = cls._brief_metadata_value(
+            text,
+            {
+                "target word count",
+                "word count target",
+                "target words",
+                "target length",
+                "chapter length",
+                "length",
+            },
+        )
+        parsed = cls._brief_int_from_text(source_value)
+        if parsed > 0:
+            return parsed
+        chapter_target = int(getattr(chapter, "target_word_count", 0) or 0)
+        if chapter_target > 0:
+            return chapter_target
+        return max(0, int(getattr(state.style_profile, "chapter_target_words", 0) or 0))
+
+    @classmethod
+    def _brief_style_fields_for_generation(
+        cls,
+        state: StoryState,
+        existing_brief: ChapterBrief | None,
+        text: str,
+    ) -> dict[str, str]:
+        style_profile = state.style_profile
+        pov_mode_source = cls._brief_metadata_value(
+            text,
+            {"pov mode", "point of view", "narrative perspective", "perspective"},
+        ) or cls._brief_metadata_value(text, {"pov"})
+        source = {
+            "pov_mode": cls._brief_normalize_pov_mode(pov_mode_source),
+            "tone": cls._brief_metadata_value(text, {"tone", "emotional tone"}),
+            "tense": cls._brief_metadata_value(text, {"tense", "narrative tense"}),
+            "prose_style": cls._brief_metadata_value(text, {"prose style", "writing style", "style"}),
+            "vocabulary_level": cls._brief_metadata_value(
+                text,
+                {"vocabulary level", "vocabulary register", "vocabulary"},
+            ),
+            "style_notes": "",
+        }
+        style_notes = [
+            cls._brief_markdown_section(text, {"style notes", "writing style notes", "voice notes"}),
+            cls._brief_metadata_value(text, {"style notes", "writing style notes", "voice notes"}),
+            cls._brief_markdown_section(text, {"vocabulary description", "vocabulary notes"}),
+            cls._brief_metadata_value(text, {"vocabulary description", "vocabulary notes"}),
+        ]
+        source["style_notes"] = " ".join(dict.fromkeys(note for note in style_notes if note))
+
+        defaults = {
+            "pov_mode": (getattr(style_profile, "point_of_view", "") or "").strip(),
+            "tone": (getattr(style_profile, "tone", "") or "").strip(),
+            "tense": (getattr(style_profile, "tense", "") or "").strip(),
+            "prose_style": (getattr(style_profile, "prose_style", "") or "").strip(),
+            "vocabulary_level": (getattr(style_profile, "vocabulary_level", "") or "").strip(),
+            "style_notes": (getattr(style_profile, "description", "") or "").strip(),
+        }
+        fields = dict.fromkeys(defaults, "")
+        for key in fields:
+            existing_value = (getattr(existing_brief, key, "") if existing_brief is not None else "") or ""
+            fields[key] = existing_value.strip() or source.get(key, "").strip() or defaults[key]
+        return fields
+
+    @classmethod
+    def _brief_continuity_notes_from_text(cls, text: str) -> str:
+        return cls._brief_markdown_section(text, {"continuity notes", "continuity"})
+
+    @staticmethod
     def _brief_continuity_notes(chapter, source_label: str, active_node_ids: list[str], state: StoryState) -> str:
         notes = [
             f"Generated from chapter {chapter.number} {source_label} text; review before outlining or drafting.",
@@ -4955,9 +5203,25 @@ class ProjectService:
 
     @staticmethod
     def _brief_beats_from_text(text: str, *, max_beats: int) -> list[str]:
+        source_lines = list((text or "").splitlines())
+        scoped: list[str] = []
+        capturing = False
+        found_beats_section = False
+        for raw in source_lines:
+            heading = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", raw)
+            if heading:
+                key = ProjectService._brief_label_key(heading.group(1))
+                if key in {"beats", "chapter beats", "planned beats", "plot points", "planned plot points"}:
+                    capturing = True
+                    found_beats_section = True
+                    continue
+                if capturing:
+                    break
+            elif capturing:
+                scoped.append(raw)
         lines = []
-        for raw in text.splitlines():
-            line = raw.strip().lstrip("-*0123456789. )").strip()
+        for raw in scoped if found_beats_section else source_lines:
+            line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s*)", "", raw).strip()
             if len(line.split()) >= 3 and not ProjectService._is_pov_metadata_beat(line):
                 lines.append(line)
         if not lines:
@@ -4967,21 +5231,41 @@ class ProjectService:
                 if len(s.split()) >= 5 and not ProjectService._is_pov_metadata_beat(s)
             ]
         out: list[str] = []
+        seen: set[str] = set()
+        skipped_labels = {
+            "chapter goal",
+            "characters threads",
+            "characters and threads",
+            "continuity",
+            "continuity notes",
+            "ending hook",
+            "hook",
+            "style notes",
+        }
         for line in lines:
             if line.startswith("#"):
+                continue
+            label = ProjectService._brief_label_key(line.rstrip(":"))
+            if label in skipped_labels:
                 continue
             if ProjectService._is_pov_metadata_beat(line):
                 continue
             if len(line) > 180:
                 line = line[:177].rstrip() + "..."
-            if line not in out:
+            key = re.sub(r"\s+", " ", re.sub(r"\*\*", "", line).strip().lower()).strip(" .!?:;—-")
+            if key and key not in seen:
                 out.append(line)
+                seen.add(key)
             if len(out) >= max_beats:
                 break
         return out
 
     @staticmethod
     def _brief_ending_hook(text: str) -> str:
+        section = ProjectService._brief_markdown_section(text, {"ending hook", "hook"})
+        if section:
+            hook = section
+            return hook if len(hook) <= 180 else hook[:177].rstrip() + "..."
         sentences = [
             s.strip()
             for s in re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text).strip())
@@ -5013,28 +5297,7 @@ class ProjectService:
         for nid in active_nodes:
             if s.get_story_graph_node(nid) is None:
                 raise StoryGraphNodeNotFound(nid)
-        try:
-            target_word_count = max(0, int(data.get("target_word_count") or 0))
-        except (TypeError, ValueError):
-            raise BadRequest("target_word_count must be a non-negative integer") from None
-        brief = ChapterBrief(
-            chapter_number=chapter_number,
-            pov_character_id=pov,
-            pov_mode=(data.get("pov_mode") or "").strip(),
-            tone=(data.get("tone") or "").strip(),
-            tense=(data.get("tense") or "").strip(),
-            prose_style=(data.get("prose_style") or "").strip(),
-            vocabulary_level=(data.get("vocabulary_level") or "").strip(),
-            style_notes=(data.get("style_notes") or "").strip(),
-            target_word_count=target_word_count,
-            active_character_ids=active_chars,
-            mentioned_character_ids=mentioned_chars,
-            active_node_ids=active_nodes,
-            required_beats=list(data.get("required_beats") or []),
-            landed_beats=list(data.get("landed_beats") or []),
-            continuity_notes=(data.get("continuity_notes") or "").strip(),
-            ending_hook=(data.get("ending_hook") or "").strip(),
-        )
+        brief = self._chapter_brief_from_current_fields(chapter_number, data)
         from prompt_context import normalize_brief_for_storage  # noqa: WPS433
         from story_graph import apply_brief_pov_to_chapter, apply_brief_target_to_chapter  # noqa: WPS433
 
@@ -5169,7 +5432,7 @@ class ProjectService:
         chapter_number: int,
         body: ApplyChapterBeatCandidatesRequest,
     ) -> ChapterBriefSummary:
-        from story_graph import new_chapter_beat_id  # noqa: WPS433
+        from chapter_brief_utils import _next_beat_id, migrate_legacy_brief_beats_to_chapter_beats  # noqa: WPS433
 
         s = self._load(project_id)
         if chapter_number not in s.chapters:
@@ -5186,23 +5449,19 @@ class ProjectService:
         existing = s.get_chapter_brief(chapter_number)
         if existing is None:
             existing = ChapterBrief(chapter_number=chapter_number)
+        migrated = migrate_legacy_brief_beats_to_chapter_beats(s, chapter_number, existing)
 
-        required_beats = list(existing.required_beats or [])
         if mode == "replace":
-            landed_beats = list(selected)
-            chapter_beats = [b for b in s.get_chapter_beats(chapter_number) if b.status != "landed"]
+            chapter_beats = [b for b in migrated if b.status != "landed"]
         else:
-            landed_beats = list(existing.landed_beats or [])
-            for beat in selected:
-                if beat not in landed_beats:
-                    landed_beats.append(beat)
-            chapter_beats = list(s.get_chapter_beats(chapter_number))
+            chapter_beats = list(migrated)
 
         known_landed = {
             ((b.title or "").strip().lower(), (b.summary or "").strip().lower())
             for b in chapter_beats
             if (b.status or "").strip() == "landed"
         }
+        known_ids = {b.id for b in chapter_beats}
         sort_order = max((b.sort_order for b in chapter_beats), default=-1) + 1
         for beat_text in selected:
             key = (beat_text.lower(), beat_text.lower())
@@ -5210,7 +5469,7 @@ class ProjectService:
                 continue
             chapter_beats.append(
                 ChapterBeat(
-                    id=new_chapter_beat_id(s, chapter_number),
+                    id=_next_beat_id(chapter_number, known_ids),
                     title=beat_text,
                     summary=beat_text,
                     sort_order=sort_order,
@@ -5221,29 +5480,12 @@ class ProjectService:
             sort_order += 1
 
         s.set_chapter_beats(chapter_number, chapter_beats)
-
-        brief = ChapterBrief(
-            chapter_number=chapter_number,
-            pov_character_id=existing.pov_character_id,
-            pov_mode=existing.pov_mode,
-            tone=existing.tone,
-            tense=existing.tense,
-            prose_style=existing.prose_style,
-            vocabulary_level=existing.vocabulary_level,
-            style_notes=existing.style_notes,
-            target_word_count=existing.target_word_count,
-            mentioned_character_ids=list(existing.mentioned_character_ids or []),
-            active_character_ids=list(existing.active_character_ids or []),
-            active_node_ids=list(existing.active_node_ids or []),
-            required_beats=required_beats,
-            landed_beats=landed_beats,
-            continuity_notes=existing.continuity_notes,
-            ending_hook=existing.ending_hook,
-        )
-        s.set_chapter_brief(brief)
+        existing.required_beats = []
+        existing.landed_beats = []
+        s.set_chapter_brief(existing)
         s.save_state()
         self.discard_chapter_beat_candidates_preview(project_id, chapter_number)
-        return self._chapter_brief_summary(brief)
+        return self._chapter_brief_summary(existing)
 
     def delete_chapter_brief(self, project_id: str, chapter_number: int) -> None:
         s = self._load(project_id)

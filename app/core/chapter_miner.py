@@ -94,7 +94,8 @@ Use exact field names. No code fences.
 def _character_prompt(chapter_number: int, text: str, source: str, title: str) -> str:
     return f"""# CHAPTER CHARACTER MINING — Chapter {chapter_number}
 
-Read this chapter prose and extract **character information only** — who appears, how they change, new cast.
+Read this chapter prose and extract **character information only** — who appears, how they change, new cast,
+and relationships between characters.
 Do not extract plot thread lists or story bible world rules.
 
 - **Chapter title:** {title or "Untitled"}
@@ -114,6 +115,10 @@ Do not extract plot thread lists or story bible world rules.
 - `Characters_Mentioned` — bulleted full names referenced in dialogue or narration but not directly present on-page
 - `New_Characters` — bulleted. Format: `Full Name | role | one-sentence description`. Roles: protagonist, antagonist, supporting, minor
 - `Character_Updates` — bulleted. Format: `Full Name: field=value` (fields: location, emotional_state, desire, goal, fear, weakness, strength, secret, notes, physical_description, age, alias, aliases)
+- `Relationship_Updates` — bulleted. Format: `Character A | canonical role or role(subrole) | Character B | optional notes`.
+  - Active canonical roles: parent/child, sibling, lover/spouse/ex, friend/ally, rival/enemy, teacher/student, caretaker/dependent, employer/employee, household master/servant, provider/client, commander/subordinate, captor/prisoner, dominant/submissive.
+  - Use `role(subrole)` when the reader-facing label should be more specific, e.g. `parent(mother)`, `child(son)`, `teacher(mentor)`, `employer(boss)`, `caretaker(guardian)`, `provider(doctor)`.
+  - Use a precise custom label when no canonical role fits. Do not auto-normalize ambiguous bare labels such as `partner` or `master` unless the chapter context qualifies the relationship.
 - `Emotional_Shifts` — bulleted. Format: `Full Name: new emotional state`
 
 Use exact field names. No code fences.
@@ -129,6 +134,7 @@ Do not list plot thread arcs, full character sheets, or ordinary landed chapter 
 Boundary rules:
 - Use `World_Facts` for durable facts that should remain true across future chapters: setting rules, technology/magic constraints, culture, geography, institutions, repeated relationship facts, and established canon.
 - Do not include one-time actions like “Alex enters the warehouse” unless they establish a reusable canon fact.
+- Do not extract character-to-character relationships such as employer, employee, spouse, rival, or mentor here; the character miner owns those.
 - Plot arcs and subplot structure belong in Story Graph / plot mining.
 - Landed beats belong in the Chapter Brief and are not automatically Story Bible canon.
 
@@ -147,7 +153,6 @@ Boundary rules:
 
 - `World_Facts` — bulleted durable setting rules, locations, technology, culture, or constraints revealed
 - `Story_Bible_Notes` — bulleted durable notes for the author bible (themes, tone hints, series lore)
-- `Relationships` — bulleted. Format: `Name A & Name B: relationship description`
 - `Setting_Details` — bulleted place/time/atmosphere facts, or `[None]`
 
 Use exact field names. No code fences.
@@ -155,6 +160,13 @@ Use exact field names. No code fences.
 
 
 class ChapterMiner:
+    """Build chapter mining prompts and save reviewable preview artifacts.
+
+    Mining is intentionally preview-first: `mine()` writes prompt/report files and
+    a JSON preview under `outputs/feedback/`, but canonical state is only saved
+    when the preview is applied by the caller.
+    """
+
     def __init__(self, project_path: str, llm: Optional[LLMClient] = None):
         self.project_path = Path(project_path)
         self.outputs_dir = self.project_path / "outputs"
@@ -169,6 +181,7 @@ class ChapterMiner:
         return self._llm
 
     def read_source(self, number: int, source: str = "draft") -> str:
+        """Read chapter text from a valid draft/revised/final source stage."""
         source = source if source in VALID_SOURCES else "draft"
         return self._reader.read_source(number, source)
 
@@ -181,6 +194,12 @@ class ChapterMiner:
         dry_run: bool = False,
         on_progress: Optional[Callable[[str], None]] = None,
     ) -> Tuple[List[str], str]:
+        """Run a focused miner and return proposed change logs plus report path.
+
+        In dry-run mode only the prompt is written. Otherwise the LLM report is
+        parsed, applied to an in-memory state copy for preview generation, and
+        discarded from canonical state until the preview apply endpoint saves it.
+        """
         if kind not in MINE_KINDS:
             raise ValueError(f"Unknown mine kind {kind!r}; expected plots, characters, or bible")
 

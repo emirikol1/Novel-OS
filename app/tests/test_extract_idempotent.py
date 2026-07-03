@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "core"))
 
-from state_manager import PlotThread, StoryState, initialize_project
+from state_manager import Character, PlotThread, StoryState, initialize_project
 from state_parser import (
     apply_chapter_bible_mine,
     apply_chapter_character_mine,
@@ -53,6 +53,38 @@ def test_repeated_character_mine_is_idempotent(tmp_path):
 
     assert len(state.characters) == 1
     assert len(state.chapters[1].plot_advances) == 1
+
+
+def test_repeated_character_relationship_mine_is_idempotent(tmp_path):
+    initialize_project(str(tmp_path), "Novel", "Drama")
+    state = StoryState(str(tmp_path))
+    state.create_chapter(1)
+    state.add_character(Character(id="char_alice", full_name="Alice", role="supporting"))
+    state.add_character(Character(id="char_bob", full_name="Bob", role="supporting"))
+    payload = {
+        "relationship_updates": ["Alice | employer | Bob"],
+    }
+    apply_chapter_character_mine(state, 1, payload, source="mine_characters")
+    apply_chapter_character_mine(state, 1, payload, source="mine_characters")
+
+    assert state.characters["char_alice"].relationships["char_bob"] == "employer"
+    assert state.characters["char_bob"].relationships["char_alice"] == "employee"
+
+
+def test_repeated_character_relationship_subrole_mine_is_idempotent(tmp_path):
+    initialize_project(str(tmp_path), "Novel", "Drama")
+    state = StoryState(str(tmp_path))
+    state.create_chapter(1)
+    state.add_character(Character(id="char_alice", full_name="Alice", role="supporting"))
+    state.add_character(Character(id="char_bob", full_name="Bob", role="supporting"))
+    payload = {
+        "relationship_updates": ["Alice | employer(boss) | Bob"],
+    }
+    apply_chapter_character_mine(state, 1, payload, source="mine_characters")
+    apply_chapter_character_mine(state, 1, payload, source="mine_characters")
+
+    assert state.characters["char_alice"].relationships["char_bob"] == "employer(boss)"
+    assert state.characters["char_bob"].relationships["char_alice"] == "employee"
 
 
 def test_repeated_bible_mine_is_idempotent(tmp_path):

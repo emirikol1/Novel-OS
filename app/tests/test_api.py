@@ -450,6 +450,37 @@ def test_add_character(tmp_path):
     assert any(c["full_name"] == "Mara Vale" for c in resp.json())
 
 
+def test_update_character_normalizes_relationship_roles(tmp_path):
+    _seed_project(tmp_path, "p", "P", "Drama")
+    c = _client(tmp_path)
+    rows = c.post("/api/projects/p/characters", json={"name": "Alice", "role": "protagonist"}).json()
+    rows = c.post("/api/projects/p/characters", json={"name": "Bob", "role": "supporting"}).json()
+    rows = c.post("/api/projects/p/characters", json={"name": "Clara", "role": "supporting"}).json()
+    rows = c.post("/api/projects/p/characters", json={"name": "Dax", "role": "minor"}).json()
+    rows = c.post("/api/projects/p/characters", json={"name": "Eve", "role": "minor"}).json()
+    by_name = {row["full_name"]: row["id"] for row in rows}
+
+    resp = c.patch(
+        f"/api/projects/p/characters/{by_name['Alice']}",
+        json={
+            "relationships": {
+                by_name["Bob"]: "mentor",
+                by_name["Clara"]: "employer(boss)",
+                by_name["Dax"]: "partner",
+                by_name["Eve"]: "secret informant",
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["relationships"] == {
+        by_name["Bob"]: "teacher(mentor)",
+        by_name["Clara"]: "employer(boss)",
+        by_name["Dax"]: "partner",
+        by_name["Eve"]: "secret informant",
+    }
+
+
 def _wait_job(client, job_id, timeout=5.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -1183,7 +1214,8 @@ def test_reassign_chapter_move(tmp_path):
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert "1" not in state["chapter_briefs"]
     assert state["chapter_briefs"]["2"]["chapter_number"] == 2
-    assert state["chapter_briefs"]["2"]["landed_beats"] == ["arrived"]
+    assert "landed_beats" not in state["chapter_briefs"]["2"]
+    assert [b["title"] for b in state["chapter_beats"]["2"]] == ["open", "arrived"]
 
 
 def test_reassign_chapter_swap(tmp_path):
@@ -1209,9 +1241,11 @@ def test_reassign_chapter_swap(tmp_path):
     assert rows[2] == "One"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["chapter_briefs"]["1"]["chapter_number"] == 1
-    assert state["chapter_briefs"]["1"]["required_beats"] == ["two"]
     assert state["chapter_briefs"]["2"]["chapter_number"] == 2
-    assert state["chapter_briefs"]["2"]["required_beats"] == ["one"]
+    assert "required_beats" not in state["chapter_briefs"]["1"]
+    assert "required_beats" not in state["chapter_briefs"]["2"]
+    assert [b["title"] for b in state["chapter_beats"]["1"]] == ["two"]
+    assert [b["title"] for b in state["chapter_beats"]["2"]] == ["one"]
 
 
 def test_reassign_chapter_collision_cancels_before_moving(tmp_path):
@@ -1272,7 +1306,8 @@ def test_insert_chapter_shifts_existing_numbers(tmp_path):
     assert not (proj / "outputs" / "manuscript" / "chapter_002_draft.md").exists()
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["chapter_briefs"]["3"]["chapter_number"] == 3
-    assert state["chapter_briefs"]["3"]["required_beats"] == ["two"]
+    assert "required_beats" not in state["chapter_briefs"]["3"]
+    assert [b["title"] for b in state["chapter_beats"]["3"]] == ["two"]
 
 
 def test_insert_chapter_collision_cancels_before_shifting(tmp_path):
@@ -1492,8 +1527,14 @@ def test_merge_next_chapter_combines_text_and_compacts(tmp_path):
     assert brief["ending_hook"] == "keep hook"
     assert brief["active_character_ids"] == ["a", "b"]
     assert brief["active_node_ids"] == ["node-a", "node-b"]
-    assert brief["required_beats"] == ["keep required", "source required"]
-    assert brief["landed_beats"] == ["keep landed", "source landed"]
+    assert "required_beats" not in brief
+    assert "landed_beats" not in brief
+    assert [b["title"] for b in state["chapter_beats"]["1"]] == [
+        "keep required",
+        "keep landed",
+        "source required",
+        "source landed",
+    ]
     assert "keep note" in brief["continuity_notes"]
     assert "source note" in brief["continuity_notes"]
 
@@ -1532,7 +1573,8 @@ def test_renumber_chapters_sequential_removes_gaps(tmp_path):
     assert not (proj / "outputs" / "feedback" / "chapter_005_report.md").exists()
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["chapter_briefs"]["3"]["chapter_number"] == 3
-    assert state["chapter_briefs"]["3"]["required_beats"] == ["five"]
+    assert "required_beats" not in state["chapter_briefs"]["3"]
+    assert [b["title"] for b in state["chapter_beats"]["3"]] == ["five"]
 
 
 def test_renumber_chapters_sequential_collision_cancels_before_moving(tmp_path):
@@ -1721,8 +1763,6 @@ def test_redraft_from_brief_preview_apply_discard(tmp_path, monkeypatch):
             "pov_mode": "third_limited",
             "active_character_ids": [],
             "active_node_ids": [],
-            "required_beats": ["Open on the vault"],
-            "landed_beats": [],
             "continuity_notes": "",
             "ending_hook": "",
         },

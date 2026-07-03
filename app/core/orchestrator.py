@@ -25,8 +25,21 @@ from llm_client import LLMClient, LLMError
 from state_parser import ingest_agent_output
 from continuity_engine import run_all as run_continuity_checks, summarize as summarize_findings, to_context_block
 from mention_context import mention_context_for_prompts
+from relationship_roles import display_relationship_label
 
 _REVISE_STATUSES = frozenset({"drafted", "editing", "edited", "validated"})
+
+
+def _format_character_relationships(state: StoryState, character: Character) -> str:
+    rels: list[str] = []
+    for other_id, label in (character.relationships or {}).items():
+        other = state.characters.get(other_id)
+        if not other:
+            continue
+        display = display_relationship_label(label)
+        if display:
+            rels.append(f"{other.full_name}: {display}")
+    return "; ".join(rels[:6])
 
 
 class NovelOrchestrator:
@@ -457,6 +470,9 @@ word-count metadata in the outline output.
                     prompt += f"location: {char.current_location or 'Unknown'}, "
                     prompt += f"emotion: {char.emotional_state or 'Unknown'}, "
                     prompt += f"arc: {char.arc_stage} ({char.arc_progress}%)\n"
+                    rels = _format_character_relationships(self.state, char)
+                    if rels:
+                        prompt += f"relationships: {rels}\n"
 
         from plot_prompts import format_plot_threads_block  # noqa: WPS433
         prompt += "\n" + format_plot_threads_block(active_threads, max_threads=8)
@@ -523,6 +539,9 @@ Write the beat-sheet now. Outline only — no prose.
                     prompt += f"- Current Location: {char.current_location or 'Unknown'}\n"
                     prompt += f"- Emotional State: {char.emotional_state or 'Unknown'}\n"
                     prompt += f"- Arc Stage: {char.arc_stage} ({char.arc_progress}%)\n"
+                    rels = _format_character_relationships(self.state, char)
+                    if rels:
+                        prompt += f"- Relationships: {rels}\n"
 
         prompt += f"""
 ### Previous Chapter Recap

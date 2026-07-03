@@ -206,13 +206,10 @@ export function buildChapterBriefDisplay(
     .map((id) => charNames.get(id))
     .filter((name): name is string => Boolean(name));
 
-  const beatsSummary = requiredBeatsSummary(brief.required_beats ?? []);
-
   const hasBrief = Boolean(
     povName
     || activeNodes.length
     || activeCharacterNames.length
-    || beatsSummary
     || brief.continuity_notes?.trim()
     || brief.ending_hook?.trim(),
   );
@@ -224,7 +221,7 @@ export function buildChapterBriefDisplay(
     povName,
     activeNodes,
     activeCharacterNames,
-    requiredBeatsSummary: beatsSummary,
+    requiredBeatsSummary: null,
   };
 }
 

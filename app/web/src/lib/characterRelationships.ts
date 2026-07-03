@@ -1,4 +1,4 @@
-/** Family-oriented relationship labels stored on Character.relationships values. */
+/** Relationship role/subrole helpers for Character.relationships string values. */
 export type FamilyKind =
   | "parent"
   | "child"
@@ -7,10 +7,20 @@ export type FamilyKind =
   | "guardian"
   | "adopted";
 
+export type ParsedRelationshipLabel = {
+  raw: string;
+  role: string | null;
+  subrole: string;
+  note: string;
+  displayLabel: string;
+};
+
 export type RelationshipEdge = {
   fromId: string;
   toId: string;
+  rawLabel: string;
   label: string;
+  canonicalRole: string | null;
   familyKind: FamilyKind | null;
 };
 
@@ -21,39 +31,186 @@ export type CharacterRelationships = {
   relationships?: Record<string, string>;
 };
 
-const PARENT_LABELS = new Set([
-  "parent", "mother", "father", "mom", "dad", "mum", "ma", "pa",
-]);
-const CHILD_LABELS = new Set([
-  "child", "son", "daughter", "kid",
-]);
-const SIBLING_LABELS = new Set([
-  "sibling", "brother", "sister", "twin",
-]);
-const SPOUSE_LABELS = new Set([
-  "spouse", "husband", "wife", "partner", "fiancé", "fiance", "fiancee",
-]);
-const GUARDIAN_LABELS = new Set(["guardian", "ward"]);
+export const CANONICAL_RELATIONSHIP_ROLES = [
+  "parent",
+  "child",
+  "sibling",
+  "lover",
+  "spouse",
+  "ex",
+  "friend",
+  "ally",
+  "rival",
+  "enemy",
+  "teacher",
+  "student",
+  "caretaker",
+  "dependent",
+  "employer",
+  "employee",
+  "household master",
+  "servant",
+  "provider",
+  "client",
+  "commander",
+  "subordinate",
+  "captor",
+  "prisoner",
+  "dominant",
+  "submissive",
+] as const;
+
+export const RELATIONSHIP_SUBROLE_SUGGESTIONS = [
+  "mother", "father", "son", "daughter", "brother", "sister", "twin",
+  "husband", "wife", "lover", "ex-spouse", "ex-lover",
+  "best friend", "teammate", "accomplice", "nemesis", "adversary",
+  "mentor", "apprentice", "guardian", "ward", "boss", "manager",
+  "master of house", "domestic servant", "doctor", "patient", "lawyer", "client",
+  "officer", "soldier", "ruler", "subject", "jailer", "hostage", "blackmailer", "victim",
+  "dom", "sub",
+] as const;
+
 const ADOPTED_LABELS = new Set(["adopted", "adoptive", "foster"]);
+const CANONICAL_BY_KEY = new Map(CANONICAL_RELATIONSHIP_ROLES.map((role) => [normalizeRelationshipLabel(role), role]));
+const AMBIGUOUS_LABELS = new Set(["partner", "master"]);
+const ALIASES = new Map<string, string>([
+  ["mother", "parent"],
+  ["father", "parent"],
+  ["mom", "parent"],
+  ["dad", "parent"],
+  ["mum", "parent"],
+  ["ma", "parent"],
+  ["pa", "parent"],
+  ["son", "child"],
+  ["daughter", "child"],
+  ["kid", "child"],
+  ["brother", "sibling"],
+  ["sister", "sibling"],
+  ["twin", "sibling"],
+  ["husband", "spouse"],
+  ["wife", "spouse"],
+  ["ex spouse", "ex"],
+  ["ex-spouse", "ex"],
+  ["ex lover", "ex"],
+  ["ex-lover", "ex"],
+  ["best friend", "friend"],
+  ["teammate", "ally"],
+  ["accomplice", "ally"],
+  ["nemesis", "enemy"],
+  ["adversary", "rival"],
+  ["mentor", "teacher"],
+  ["apprentice", "student"],
+  ["guardian", "caretaker"],
+  ["ward", "dependent"],
+  ["boss", "employer"],
+  ["manager", "employer"],
+  ["worker", "employee"],
+  ["staff", "employee"],
+  ["master of house", "household master"],
+  ["domestic servant", "servant"],
+  ["service provider", "provider"],
+  ["doctor", "provider"],
+  ["lawyer", "provider"],
+  ["therapist", "provider"],
+  ["patient", "client"],
+  ["officer", "commander"],
+  ["ruler", "commander"],
+  ["soldier", "subordinate"],
+  ["subject", "subordinate"],
+  ["jailer", "captor"],
+  ["blackmailer", "captor"],
+  ["hostage", "prisoner"],
+  ["victim", "prisoner"],
+  ["dom", "dominant"],
+  ["sub", "submissive"],
+]);
 
 /** Normalize a relationship label for token matching. */
 export function normalizeRelationshipLabel(label: string): string {
   return label.trim().toLowerCase().replace(/[^a-z0-9\s-]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function aliasRoleForKey(key: string): string | null {
+  const exact = ALIASES.get(key);
+  if (exact) return exact;
+  for (const [alias, role] of ALIASES.entries()) {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(key)) {
+      return role;
+    }
+  }
+  return null;
+}
+
+/** Parse legacy free text or encoded `role(subrole): note` labels. */
+export function parseRelationshipLabel(label: string): ParsedRelationshipLabel {
+  const raw = label.trim();
+  if (!raw) return { raw: "", role: null, subrole: "", note: "", displayLabel: "" };
+  const [baseRaw, ...noteParts] = raw.split(":");
+  const base = baseRaw.trim();
+  const note = noteParts.join(":").trim();
+  const encoded = base.match(/^\s*([^()]+?)\s*\(([^()]*)\)\s*$/);
+  if (encoded) {
+    const role = CANONICAL_BY_KEY.get(normalizeRelationshipLabel(encoded[1]));
+    if (role) {
+      const subrole = encoded[2].trim() || role;
+      const displayLabel = note ? `${subrole}: ${note}` : subrole;
+      return { raw, role, subrole, note, displayLabel };
+    }
+  }
+
+  const key = normalizeRelationshipLabel(base);
+  const canonical = CANONICAL_BY_KEY.get(key);
+  if (canonical) {
+    const displayLabel = note ? `${canonical}: ${note}` : canonical;
+    return { raw, role: canonical, subrole: canonical, note, displayLabel };
+  }
+  if (AMBIGUOUS_LABELS.has(key)) {
+    const displayLabel = note ? `${base}: ${note}` : base;
+    return { raw, role: null, subrole: base, note, displayLabel };
+  }
+  const aliasRole = aliasRoleForKey(key);
+  if (aliasRole) {
+    const displayLabel = note ? `${base}: ${note}` : base;
+    return { raw, role: aliasRole, subrole: base, note, displayLabel };
+  }
+  const displayLabel = note ? `${base}: ${note}` : base;
+  return { raw, role: null, subrole: base, note, displayLabel };
+}
+
+/** Encode a canonical role, optional display subrole, and optional note for storage. */
+export function stringifyRelationshipLabel(role: string | null, subrole: string, note = ""): string {
+  const canonical = role ? CANONICAL_BY_KEY.get(normalizeRelationshipLabel(role)) : null;
+  const cleanSubrole = subrole.trim();
+  const cleanNote = note.trim();
+  let label = cleanSubrole;
+  if (canonical) {
+    label = !cleanSubrole || normalizeRelationshipLabel(cleanSubrole) === normalizeRelationshipLabel(canonical)
+      ? canonical
+      : `${canonical}(${cleanSubrole})`;
+  }
+  return cleanNote && label ? `${label}: ${cleanNote}` : label;
+}
+
+export function displayRelationshipLabel(label: string): string {
+  return parseRelationshipLabel(label).displayLabel;
+}
+
 /** Classify a free-text relationship label into a family category when possible. */
 export function classifyRelationshipLabel(label: string): FamilyKind | null {
-  const norm = normalizeRelationshipLabel(label);
-  if (!norm) return null;
-  const tokens = norm.split(" ");
-  const has = (set: Set<string>) => tokens.some((t) => set.has(t)) || [...set].some((w) => norm.includes(w));
+  return familyKindFromParsedRelationshipLabel(parseRelationshipLabel(label));
+}
 
-  if (has(ADOPTED_LABELS)) return "adopted";
-  if (has(GUARDIAN_LABELS)) return "guardian";
-  if (has(PARENT_LABELS)) return "parent";
-  if (has(CHILD_LABELS)) return "child";
-  if (has(SIBLING_LABELS)) return "sibling";
-  if (has(SPOUSE_LABELS)) return "spouse";
+function familyKindFromParsedRelationshipLabel(parsed: ParsedRelationshipLabel): FamilyKind | null {
+  const normalizedDisplay = normalizeRelationshipLabel(parsed.displayLabel || parsed.raw);
+  if (!normalizedDisplay) return null;
+  const hasAdopted = [...ADOPTED_LABELS].some((word) => normalizedDisplay.includes(word));
+  if (hasAdopted) return "adopted";
+  if (parsed.role === "parent") return "parent";
+  if (parsed.role === "child") return "child";
+  if (parsed.role === "sibling") return "sibling";
+  if (parsed.role === "spouse") return "spouse";
+  if (parsed.role === "caretaker" || parsed.role === "dependent") return "guardian";
   return null;
 }
 
@@ -66,11 +223,14 @@ export function buildRelationshipEdges(characters: CharacterRelationships[]): Re
     const rels = char.relationships ?? {};
     for (const [targetId, label] of Object.entries(rels)) {
       if (!known.has(targetId) || !label.trim()) continue;
+      const parsed = parseRelationshipLabel(label);
       edges.push({
         fromId: char.id,
         toId: targetId,
-        label: label.trim(),
-        familyKind: classifyRelationshipLabel(label),
+        rawLabel: label.trim(),
+        label: parsed.displayLabel,
+        canonicalRole: parsed.role,
+        familyKind: familyKindFromParsedRelationshipLabel(parsed),
       });
     }
   }
@@ -114,8 +274,7 @@ export function buildFamilyLinks(edges: RelationshipEdge[]): FamilyLink[] {
         directed: true,
       });
     } else if (kind === "guardian") {
-      const norm = normalizeRelationshipLabel(edge.label);
-      if (norm.includes("ward")) {
+      if (edge.canonicalRole === "dependent") {
         links.push({
           fromId: edge.toId,
           toId: edge.fromId,

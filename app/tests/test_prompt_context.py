@@ -156,6 +156,8 @@ def test_strip_outline_brief_duplicate_sections():
 
 
 def test_build_chapter_context_strips_duplicate_outline_sections(tmp_path):
+    from story_graph import ChapterBeat
+
     _, state = _project(tmp_path)
     chapter = state.get_chapter(1)
     assert chapter is not None
@@ -163,9 +165,12 @@ def test_build_chapter_context_strips_duplicate_outline_sections(tmp_path):
         chapter_number=1,
         continuity_notes="From brief.",
         ending_hook="Brief hook.",
-        required_beats=["Must include the vault"],
     )
     state.set_chapter_brief(brief)
+    state.set_chapter_beats(
+        1,
+        [ChapterBeat(id="beat_1_001", title="Must include the vault", status="planned")],
+    )
     state.save_state()
     outline = (
         "## Beats\n1. Scene one.\n\n"
@@ -196,12 +201,18 @@ def test_build_chapter_context_prefers_chapter_beats_precedence_note(tmp_path):
     assert "**Chapter Beats** in the chapter brief take precedence" in block
 
 
-def test_build_chapter_context_legacy_required_beats_fallback(tmp_path):
+def test_build_chapter_context_uses_chapter_beats(tmp_path):
+    from story_graph import ChapterBeat
+
     _, state = _project(tmp_path)
     chapter = state.get_chapter(1)
     assert chapter is not None
-    brief = ChapterBrief(chapter_number=1, required_beats=["Must include the vault"])
+    brief = ChapterBrief(chapter_number=1)
     state.set_chapter_brief(brief)
+    state.set_chapter_beats(
+        1,
+        [ChapterBeat(id="beat_1_001", title="Must include the vault", status="planned")],
+    )
     state.save_state()
     outline = "## Beats\n1. Outline beat only.\n"
     block = build_chapter_context_block(state, chapter, outline_text=outline)

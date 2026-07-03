@@ -750,8 +750,6 @@ class ChapterBriefSummary(BaseModel):
     active_character_ids: list[str] = []
     mentioned_character_ids: list[str] = []
     active_node_ids: list[str] = []
-    required_beats: list[str] = []
-    landed_beats: list[str] = []
     continuity_notes: str = ""
     ending_hook: str = ""
 
@@ -768,8 +766,6 @@ class SaveChapterBrief(BaseModel):
     active_character_ids: list[str] = []
     mentioned_character_ids: list[str] = []
     active_node_ids: list[str] = []
-    required_beats: list[str] = []
-    landed_beats: list[str] = []
     continuity_notes: str = ""
     ending_hook: str = ""
 
@@ -917,8 +913,6 @@ class ChapterContextPreviewRequest(BaseModel):
     pov_mode: str = ""
     active_character_ids: list[str] = []
     active_node_ids: list[str] = []
-    required_beats: list[str] = []
-    landed_beats: list[str] = []
     continuity_notes: str = ""
     ending_hook: str = ""
 

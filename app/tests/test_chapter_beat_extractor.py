@@ -52,6 +52,11 @@ def _seed_beat_project(tmp_path):
     )
     state.create_chapter(2)
     state.save_state()
+    state_file = proj / "outputs" / "state" / "story_state.json"
+    raw = json.loads(state_file.read_text(encoding="utf-8"))
+    raw["chapter_briefs"]["2"]["required_beats"] = ["Reach the warehouse", "Find the map"]
+    raw["chapter_briefs"]["2"]["landed_beats"] = ["Old landed beat"]
+    state_file.write_text(json.dumps(raw), encoding="utf-8")
     ms = proj / "outputs" / "manuscript"
     ms.mkdir(parents=True, exist_ok=True)
     (ms / "chapter_002_draft.md").write_text(
@@ -166,7 +171,7 @@ def test_generate_beat_candidates_async_saves_preview(mock_run, tmp_path):
     assert body["candidates"][0]["beat"] == "Alex enters the warehouse"
 
 
-def test_apply_beat_candidates_preserves_required_beats(tmp_path):
+def test_apply_beat_candidates_migrates_old_brief_beats_to_board(tmp_path):
     _seed_beat_project(tmp_path)
     c = _client(tmp_path)
 
@@ -179,22 +184,25 @@ def test_apply_beat_candidates_preserves_required_beats(tmp_path):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["required_beats"] == ["Reach the warehouse", "Find the map"]
-    assert "Alex enters the warehouse" in body["landed_beats"]
-    assert "Guard blocks the exit" in body["landed_beats"]
-    assert "Old landed beat" in body["landed_beats"]
+    assert "required_beats" not in body
+    assert "landed_beats" not in body
 
     sf = tmp_path / "beat_novel" / "outputs" / "state" / "story_state.json"
     disk = json.loads(sf.read_text(encoding="utf-8"))
     brief = disk["chapter_briefs"]["2"]
-    assert brief["required_beats"] == ["Reach the warehouse", "Find the map"]
-    assert "Alex enters the warehouse" in brief["landed_beats"]
+    assert "required_beats" not in brief
+    assert "landed_beats" not in brief
     assert "2" in disk["chapter_beats"]
+    planned_rows = [b for b in disk["chapter_beats"]["2"] if b["status"] == "planned"]
     landed_rows = [b for b in disk["chapter_beats"]["2"] if b["status"] == "landed"]
+    assert any("Reach the warehouse" in b["title"] for b in planned_rows)
+    assert any("Find the map" in b["title"] for b in planned_rows)
+    assert any("Old landed beat" in b["title"] for b in landed_rows)
     assert any("Alex enters the warehouse" in b["title"] for b in landed_rows)
+    assert any("Guard blocks the exit" in b["title"] for b in landed_rows)
 
 
-def test_apply_beat_candidates_dual_writes_landed_beats(tmp_path):
+def test_apply_beat_candidates_writes_only_chapter_beats(tmp_path):
     _seed_beat_project(tmp_path)
     c = _client(tmp_path)
 
@@ -204,7 +212,7 @@ def test_apply_beat_candidates_dual_writes_landed_beats(tmp_path):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert "New landed beat" in body["landed_beats"]
+    assert "landed_beats" not in body
     disk = json.loads(
         (tmp_path / "beat_novel" / "outputs" / "state" / "story_state.json").read_text(encoding="utf-8"),
     )
@@ -250,5 +258,8 @@ def test_apply_beat_candidates_replace_mode(tmp_path):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["landed_beats"] == ["Only this beat"]
-    assert body["required_beats"] == ["Reach the warehouse", "Find the map"]
+    assert "landed_beats" not in body
+    assert "required_beats" not in body
+    beats = StoryState(str(tmp_path / "beat_novel")).get_chapter_beats(2)
+    landed = [b.title for b in beats if b.status == "landed"]
+    assert landed == ["Only this beat"]

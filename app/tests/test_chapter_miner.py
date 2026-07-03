@@ -8,8 +8,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "core"))
 
 from entity_dedup import nest_plot_threads  # noqa: E402
-from state_manager import PlotThread, StoryState, initialize_project  # noqa: E402
-from state_parser import apply_chapter_plot_mine  # noqa: E402
+from state_manager import Character, PlotThread, StoryState, initialize_project  # noqa: E402
+from state_parser import apply_chapter_character_mine, apply_chapter_plot_mine, parse_chapter_character  # noqa: E402
 
 
 def test_nest_plot_threads_adds_subplots(tmp_path):
@@ -147,6 +147,68 @@ def test_character_mine_prompt_includes_mentioned_field():
     prompt = _character_prompt(1, "Sample prose.", "draft", "Opening")
     assert "Characters_Mentioned" in prompt
     assert "Characters_Present" in prompt
+    assert "Relationship_Updates" in prompt
+    assert "employer" in prompt
+    assert "custom label" in prompt
+
+
+def test_parse_chapter_character_relationship_updates():
+    parsed = parse_chapter_character("""
+[CHAPTER_CHARACTER_UPDATE]
+Characters_Present:
+  - Alice
+Relationship_Updates:
+  - Alice | employer | Bob | runs the workshop
+[/CHAPTER_CHARACTER_UPDATE]
+""")
+
+    assert parsed["relationship_updates"] == ["Alice | employer | Bob | runs the workshop"]
+
+
+def test_apply_chapter_character_mine_relationship_updates(tmp_path):
+    initialize_project(str(tmp_path), "Novel", "Drama")
+    state = StoryState(str(tmp_path))
+    state.create_chapter(1)
+    state.add_character(Character(id="char_alice", full_name="Alice", role="protagonist"))
+    state.add_character(Character(id="char_bob", full_name="Bob", role="supporting"))
+    state.add_character(Character(id="char_clara", full_name="Clara", role="minor"))
+
+    log = apply_chapter_character_mine(
+        state,
+        1,
+        {
+            "relationship_updates": [
+                "Alice | employer | Bob | runs the workshop",
+                "Bob | mentor | Clara",
+                "Alice | secret informant | Clara",
+            ],
+        },
+        source="test",
+    )
+
+    assert state.characters["char_alice"].relationships["char_bob"] == "employer: runs the workshop"
+    assert state.characters["char_bob"].relationships["char_alice"] == "employee"
+    assert state.characters["char_bob"].relationships["char_clara"] == "teacher(mentor)"
+    assert state.characters["char_clara"].relationships["char_bob"] == "student"
+    assert state.characters["char_alice"].relationships["char_clara"] == "secret informant"
+    assert "char_alice: relationship to char_bob updated" in "\n".join(log)
+
+
+def test_apply_chapter_character_mine_returns_presence_log(tmp_path):
+    initialize_project(str(tmp_path), "Novel", "Drama")
+    state = StoryState(str(tmp_path))
+    state.create_chapter(1)
+    state.add_character(Character(id="char_alice", full_name="Alice", role="protagonist"))
+
+    log = apply_chapter_character_mine(
+        state,
+        1,
+        {"characters_present": ["Alice"]},
+        source="test",
+    )
+
+    assert state.characters["char_alice"].last_appearance_chapter == 1
+    assert any("char_alice: appeared in ch1" in line for line in log)
 
 
 def test_apply_chapter_plot_mine_updates_graph_lifespan(tmp_path):
@@ -176,6 +238,28 @@ def test_apply_chapter_plot_mine_updates_graph_lifespan(tmp_path):
     assert node.start_chapter == 2
     assert node.resolution_chapter == 8
     assert any("lifespan updated" in line for line in log)
+
+
+def test_apply_chapter_plot_mine_skips_malformed_pipe_rows(tmp_path):
+    initialize_project(str(tmp_path), "Novel", "Drama")
+    state = StoryState(str(tmp_path))
+    state.create_chapter(1)
+
+    log = apply_chapter_plot_mine(
+        state,
+        1,
+        {
+            "subplot_threads": ["Missing delimiter"],
+            "subplot_beats": ["Also missing delimiter"],
+            "plot_lifespan_updates": ["No lifespan delimiter"],
+        },
+        source="test",
+    )
+
+    joined = "\n".join(log)
+    assert "skipped malformed Subplot_Threads" in joined
+    assert "skipped malformed Subplot_Beats" in joined
+    assert "skipped malformed Plot_Lifespan_Updates" in joined
 
 
 def test_locked_mine_apply_preserves_plot_and_character_updates(tmp_path):

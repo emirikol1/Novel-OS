@@ -317,10 +317,6 @@ def build_chapter_context_block(
             beat_note = (
                 "_(Outline beats below; **Chapter Beats** in the chapter brief take precedence on conflict.)_"
             )
-        elif any((b or "").strip() for b in (brief.required_beats or [])):
-            beat_note = (
-                "_(Outline beats below; **Required Beats** in the chapter brief take precedence on conflict.)_"
-            )
         sections.append(f"## Beat sheet\n{beat_note}\n\n{outline}")
 
     return "\n\n".join(sections)

@@ -336,6 +336,13 @@ class StoryState:
             elif should_recover_wiped_registry_on_load(self.state_file, data):
                 reconcile_chapters_from_artifacts(self, registry_numbers=set())
 
+    @staticmethod
+    def _chapter_brief_payload(brief: ChapterBrief) -> Dict[str, Any]:
+        data = brief.to_dict()
+        data.pop("required_beats", None)
+        data.pop("landed_beats", None)
+        return data
+
     def _state_payload(self) -> Dict[str, Any]:
         return {
             'schema_version': self.schema_version,
@@ -348,7 +355,7 @@ class StoryState:
             'style_profile': self.style_profile.to_dict(),
             'story_graph_nodes': {k: v.to_dict() for k, v in self.story_graph_nodes.items()},
             'story_graph_edges': {k: v.to_dict() for k, v in self.story_graph_edges.items()},
-            'chapter_briefs': {k: v.to_dict() for k, v in self.chapter_briefs.items()},
+            'chapter_briefs': {k: self._chapter_brief_payload(v) for k, v in self.chapter_briefs.items()},
             'chapter_beats': {
                 k: [b.to_dict() for b in beats]
                 for k, beats in self.chapter_beats.items()

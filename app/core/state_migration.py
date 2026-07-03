@@ -1,8 +1,8 @@
 """
 Schema migration for story_state.json (Structure V2).
 
-P0: version detection, step ordering, and idempotent stubs.
-P2: implement step bodies (graph, lifespan, briefs, beats, pins).
+Runs ordered, idempotent v1→v2 steps for graph nodes, lifespans, chapter
+briefs, chapter beats, and chapter pins.
 """
 
 from __future__ import annotations
@@ -12,9 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 from story_graph import (
-    ChapterBeat,
     migrate_plot_threads_to_graph,
-    new_chapter_beat_id,
     normalize_brief_characters,
     normalize_start_chapter,
 )
@@ -102,39 +100,24 @@ def _step_sync_brief_mentioned_characters(state: "StoryState", target_version: i
 
 
 def _step_migrate_brief_beats_to_chapter_beats(state: "StoryState", target_version: int) -> bool:
-    """Step 5: required/landed beats -> chapter_beats (skip when beats exist)."""
+    """Step 5: old brief beat strings -> chapter_beats, then clear old fields."""
+    from chapter_brief_utils import migrate_legacy_brief_beats_to_chapter_beats  # noqa: WPS433
+
     changed = False
     for chapter_number, brief in state.chapter_briefs.items():
-        if state.chapter_beats.get(chapter_number):
-            continue
-        required = [b.strip() for b in (brief.required_beats or []) if (b or "").strip()]
-        landed = [b.strip() for b in (brief.landed_beats or []) if (b or "").strip()]
-        if not required and not landed:
-            continue
-        beats: List[ChapterBeat] = []
-        sort_order = 0
-        for title in required:
-            beats.append(
-                ChapterBeat(
-                    id=new_chapter_beat_id(state, chapter_number),
-                    title=title,
-                    sort_order=sort_order,
-                    status="planned",
-                )
-            )
-            sort_order += 1
-        for title in landed:
-            beats.append(
-                ChapterBeat(
-                    id=new_chapter_beat_id(state, chapter_number),
-                    title=title,
-                    sort_order=sort_order,
-                    status="landed",
-                )
-            )
-            sort_order += 1
-        state.chapter_beats[chapter_number] = beats
-        changed = True
+        before = (
+            len(state.chapter_beats.get(chapter_number, [])),
+            list(brief.required_beats or []),
+            list(brief.landed_beats or []),
+        )
+        migrate_legacy_brief_beats_to_chapter_beats(state, chapter_number, brief)
+        after = (
+            len(state.chapter_beats.get(chapter_number, [])),
+            list(brief.required_beats or []),
+            list(brief.landed_beats or []),
+        )
+        if before != after:
+            changed = True
     return changed
 
 
@@ -193,11 +176,16 @@ def migrate_story_state(
         state.schema_version = source_version
 
     if source_version >= target_version:
+        cleanup_steps: List[str] = []
+        changed = False
+        if _step_migrate_brief_beats_to_chapter_beats(state, target_version):
+            cleanup_steps.append("migrate_brief_beats_to_chapter_beats")
+            changed = True
         return MigrationResult(
-            changed=False,
+            changed=changed,
             source_version=source_version,
             target_version=target_version,
-            steps_applied=[],
+            steps_applied=cleanup_steps,
         )
 
     steps_applied: List[str] = []

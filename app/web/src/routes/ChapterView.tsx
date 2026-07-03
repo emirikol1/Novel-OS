@@ -1856,6 +1856,16 @@ export default function ChapterView() {
               operationsSection={
                 <ChapterOperationsSection
                   busy={busy != null}
+                  splitAtTargetVisible={hasRegenerateSource(stages)}
+                  splitAtTargetRunning={splittingChapter}
+                  splitAtTargetDisabled={
+                    isRunning
+                    || splittingChapter
+                    || outlineGenerating
+                    || aligningBoundary
+                    || !hasRegenerateSource(stages)
+                  }
+                  onSplitAtTargetAndAlign={() => void startSplitAtTargetAndAlign()}
                   onInsertBefore={() => void insertChapterAt(num)}
                   onInsertAfter={() => void insertChapterAt(num + 1)}
                   onDuplicate={() => void duplicateThisChapter()}
@@ -1926,7 +1936,6 @@ export default function ChapterView() {
               onAlignBoundary={() => void startAlignBoundary()}
               onRegenerateOutline={(mode) => void startGenerateOutline(mode)}
               onSplitChapter={() => startSplitChapter()}
-              onSplitAtTargetAndAlign={() => void startSplitAtTargetAndAlign()}
               onMine={mineFromChapter}
             />
 

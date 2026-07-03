@@ -138,3 +138,36 @@ test("deep-link ?stage=outline is honored on first load", async () => {
   await new Promise((r) => setTimeout(r, 50));
   expect(document.body).not.toHaveTextContent("Final two");
 });
+
+test("split at target and align lives inside chapter operations", async () => {
+  const user = userEvent.setup();
+
+  vi.spyOn(client.api, "chapter").mockResolvedValue({
+    ...META,
+    status: "complete",
+    word_count: 1200,
+  });
+  vi.spyOn(client.api, "chapters").mockResolvedValue([]);
+  vi.spyOn(client.api, "characters").mockResolvedValue([]);
+  vi.spyOn(client.api, "storyBible").mockResolvedValue({ data: {} });
+  vi.spyOn(client.api, "stages").mockResolvedValue({
+    number: 1,
+    status: "complete",
+    outline: "# Beats three",
+    draft: "Draft three",
+    revised: "Revised three",
+    final: "Final three",
+    continuity: null,
+  });
+  vi.spyOn(client.api, "comments").mockResolvedValue([]);
+
+  renderAt();
+
+  await waitFor(() => expect(document.body).toHaveTextContent("Final three"));
+  expect(screen.queryByRole("button", { name: "Split at target & align" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: /Chapter Brief/i }));
+
+  expect(await screen.findByRole("button", { name: "Split at target & align" })).toBeInTheDocument();
+  expect(screen.getByText("Chapter operations")).toBeInTheDocument();
+});

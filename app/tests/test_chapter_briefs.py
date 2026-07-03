@@ -12,6 +12,7 @@ from orchestrator import NovelOrchestrator  # noqa: E402
 from api.services import ProjectService  # noqa: E402
 from state_manager import Character, PlotThread, StoryState, initialize_project  # noqa: E402
 from story_graph import (  # noqa: E402
+    ChapterBeat,
     ChapterBrief,
     StoryGraphEdge,
     StoryGraphNode,
@@ -35,6 +36,7 @@ def _seed_brief_project(tmp_path):
             emotional_state="anxious",
             arc_stage="middle",
             arc_progress=40,
+            relationships={"char_b": "teacher(mentor)"},
         ),
     )
     state.add_character(
@@ -68,10 +70,16 @@ def _seed_brief_project(tmp_path):
             pov_mode="third_limited",
             active_character_ids=["char_a", "char_b"],
             active_node_ids=[main_node_id],
-            required_beats=["Alarm fails", "Bob confronts Alice"],
             continuity_notes="Alice still has the keycard.",
             ending_hook="The vault door opens.",
         ),
+    )
+    state.set_chapter_beats(
+        3,
+        [
+            ChapterBeat(id="beat_3_001", title="Alarm fails", status="planned", sort_order=0),
+            ChapterBeat(id="beat_3_002", title="Bob confronts Alice", status="planned", sort_order=1),
+        ],
     )
     state.create_chapter(3)
     state.save_state()
@@ -92,6 +100,8 @@ def test_format_chapter_brief_prompt_context_includes_selections(tmp_path):
     assert "**Alice**" in ctx
     assert "**Bob**" in ctx
     assert "Vault antechamber" in ctx
+    assert "Bob: mentor" in ctx
+    assert "teacher(mentor)" not in ctx
     assert "The Heist" in ctx
     assert main_node_id in ctx or "Steal the vault key" in ctx
     assert "Alarm fails" in ctx
@@ -105,8 +115,14 @@ def test_format_chapter_brief_prompt_context_includes_landed_beats(tmp_path):
     state = StoryState(str(proj))
     brief = state.get_chapter_brief(3)
     assert brief is not None
-    brief.landed_beats = ["Vault alarm triggered", "Bob reveals betrayal"]
-    state.set_chapter_brief(brief)
+    state.set_chapter_beats(
+        3,
+        [
+            ChapterBeat(id="beat_3_001", title="Alarm fails", status="planned", sort_order=0),
+            ChapterBeat(id="beat_3_002", title="Vault alarm triggered", status="landed", sort_order=1),
+            ChapterBeat(id="beat_3_003", title="Bob reveals betrayal", status="landed", sort_order=2),
+        ],
+    )
     state.save_state()
 
     ctx = format_chapter_brief_prompt_context(state, brief)
@@ -176,7 +192,6 @@ def test_format_chapter_brief_warns_on_missing_ids(tmp_path):
     assert "[unknown character id: ghost_char]" in ctx
     assert "[unknown character id: missing_pov]" in ctx
     assert "[unknown story node id: ghost_node]" in ctx
-    assert "One beat" in ctx
 
 
 def test_generate_chapter_brief_from_sample_outline(tmp_path):
@@ -200,11 +215,126 @@ def test_generate_chapter_brief_from_sample_outline(tmp_path):
     assert "char_b" in brief.mentioned_character_ids
     assert "char_a" in brief.active_character_ids
     assert main_node_id in brief.active_node_ids
-    assert brief.required_beats == []
     saved_beats = StoryState(str(proj)).get_chapter_beats(3)
     assert saved_beats
-    assert "Alice enters the vault" in saved_beats[0].title
+    assert any("Alice enters the vault" in beat.title for beat in saved_beats)
     assert "Generated from chapter 3" in brief.continuity_notes
+
+
+def test_generate_chapter_brief_extracts_full_metadata_from_outline(tmp_path):
+    proj, _ = _seed_brief_project(tmp_path)
+    state = StoryState(str(proj))
+    state.delete_chapter_brief(3)
+    chapter = state.get_chapter(3)
+    assert chapter is not None
+    chapter.pov_character = ""
+    state.style_profile.description = "Default style note should be replaced."
+    state.save_state()
+    (proj / "outputs" / "chapter_003_outline.md").write_text(
+        "# Chapter 3: Vault Turn\n\n"
+        "**POV Character:** Bob | **POV Mode:** Third person omniscient\n"
+        "**Target word count:** 3,400 words\n"
+        "**Tone:** dread\n"
+        "**Tense:** present\n"
+        "**Prose style:** lyrical suspense\n"
+        "**Vocabulary level:** elevated\n"
+        "**Vocabulary description:** Precise ritual language.\n"
+        "**Style notes:** Use clipped fragments around alarms.\n\n"
+        "## Beats\n"
+        "1. Alice enters the vault to advance The Heist.\n"
+        "2. Bob reveals the keycard was switched.\n\n"
+        "## Continuity Notes\n"
+        "- Alice still has the keycard.\n\n"
+        "## Ending Hook\n"
+        "The vault door opens.\n",
+        encoding="utf-8",
+    )
+
+    brief = ProjectService(tmp_path).generate_chapter_brief("brief_novel", 3)
+
+    assert brief.pov_character_id == "char_b"
+    assert brief.pov_mode == "third_omniscient"
+    assert brief.target_word_count == 3400
+    assert brief.tone == "dread"
+    assert brief.tense == "present"
+    assert brief.prose_style == "lyrical suspense"
+    assert brief.vocabulary_level == "elevated"
+    assert "Use clipped fragments around alarms." in brief.style_notes
+    assert "Precise ritual language." in brief.style_notes
+    assert "Alice still has the keycard." in brief.continuity_notes
+    assert brief.ending_hook == "The vault door opens."
+
+
+def test_generate_chapter_brief_creates_missing_explicit_pov_character(tmp_path):
+    proj, _ = _seed_brief_project(tmp_path)
+    state = StoryState(str(proj))
+    state.delete_chapter_brief(3)
+    chapter = state.get_chapter(3)
+    assert chapter is not None
+    chapter.pov_character = ""
+    state.save_state()
+    (proj / "outputs" / "chapter_003_outline.md").write_text(
+        "# Chapter 3: New Viewpoint\n\n"
+        "**POV Character:** Clara West | **POV Mode:** First person\n\n"
+        "## Beats\n"
+        "1. Clara West discovers the vault is already open.\n"
+        "2. Alice decides to trust Clara with the next key.\n",
+        encoding="utf-8",
+    )
+
+    brief = ProjectService(tmp_path).generate_chapter_brief("brief_novel", 3)
+
+    assert brief.pov_character_id == "char_clara_west"
+    assert brief.pov_mode == "first_person"
+    assert "char_clara_west" in brief.mentioned_character_ids
+    reloaded = StoryState(str(proj))
+    created = reloaded.get_character("char_clara_west")
+    assert created is not None
+    assert created.full_name == "Clara West"
+    assert created.role == "supporting"
+
+
+def test_generate_chapter_brief_dedupes_planned_beats_and_keeps_continuity_notes(tmp_path):
+    from story_graph import ChapterBeat
+
+    proj, _ = _seed_brief_project(tmp_path)
+    state = StoryState(str(proj))
+    state.set_chapter_beats(
+        3,
+        [
+            ChapterBeat(
+                id="beat_3_001",
+                title="Alice enters the vault.",
+                summary="",
+                sort_order=0,
+                status="planned",
+            ),
+        ],
+    )
+    state.save_state()
+    (proj / "outputs" / "chapter_003_outline.md").write_text(
+        "# Chapter 3: Dedupe Case\n\n"
+        "## Beats\n"
+        "1. Alice enters the vault.\n"
+        "2. Alice enters the vault.\n"
+        "3. Bob checks the alarm panel.\n"
+        "4. Bob checks the alarm panel.\n\n"
+        "## Continuity Notes\n"
+        "- Alice still has the keycard.\n\n"
+        "## Ending Hook\n"
+        "The alarm goes silent.\n",
+        encoding="utf-8",
+    )
+
+    brief = ProjectService(tmp_path).generate_chapter_brief("brief_novel", 3)
+
+    saved_beats = StoryState(str(proj)).get_chapter_beats(3)
+    planned_titles = [b.title for b in saved_beats if b.status == "planned"]
+    assert planned_titles.count("Alice enters the vault.") == 1
+    assert planned_titles.count("Bob checks the alarm panel.") == 1
+    assert not any("Alice still has the keycard" in title for title in planned_titles)
+    assert "Alice still has the keycard." in brief.continuity_notes
+    assert brief.ending_hook == "The alarm goes silent."
 
 
 def test_generate_chapter_brief_skips_pov_metadata_beats(tmp_path):
@@ -221,10 +351,9 @@ def test_generate_chapter_brief_skips_pov_metadata_beats(tmp_path):
     brief = ProjectService(tmp_path).generate_chapter_brief("brief_novel", 3)
 
     assert brief.pov_character_id == "char_a"
-    assert all("pov" not in beat.lower() or "vault" in beat.lower() for beat in brief.required_beats)
     saved_beats = StoryState(str(proj)).get_chapter_beats(3)
     assert saved_beats
-    assert "Alice enters the vault" in saved_beats[0].title
+    assert any("Alice enters the vault" in beat.title for beat in saved_beats)
     assert not any(beat.lower().startswith("pov:") for beat in [b.title for b in saved_beats])
     assert not any(beat.lower().startswith("point of view:") for beat in [b.title for b in saved_beats])
 
@@ -234,8 +363,14 @@ def test_generate_chapter_brief_preserves_landed_beats(tmp_path):
     state = StoryState(str(proj))
     brief = state.get_chapter_brief(3)
     assert brief is not None
-    brief.landed_beats = ["Vault alarm triggered", "Bob reveals betrayal"]
-    state.set_chapter_brief(brief)
+    state.set_chapter_beats(
+        3,
+        [
+            *state.get_chapter_beats(3),
+            ChapterBeat(id="beat_3_003", title="Vault alarm triggered", status="landed", sort_order=2),
+            ChapterBeat(id="beat_3_004", title="Bob reveals betrayal", status="landed", sort_order=3),
+        ],
+    )
     state.save_state()
     (proj / "outputs" / "chapter_003_outline.md").write_text(
         "- Alice enters the vault to advance The Heist.\n"
@@ -246,9 +381,9 @@ def test_generate_chapter_brief_preserves_landed_beats(tmp_path):
 
     generated = ProjectService(tmp_path).generate_chapter_brief("brief_novel", 3)
 
-    assert generated.landed_beats == ["Vault alarm triggered", "Bob reveals betrayal"]
     saved_beats = StoryState(str(proj)).get_chapter_beats(3)
     assert any(b.status == "landed" and "Vault alarm triggered" in b.title for b in saved_beats)
+    assert any(b.status == "landed" and "Bob reveals betrayal" in b.title for b in saved_beats)
     assert any("Alice enters the vault" in b.title for b in saved_beats)
 
 
